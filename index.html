@@ -277,10 +277,20 @@ import{initializeApp}from'https://www.gstatic.com/firebasejs/10.7.1/firebase-app
 import{getFirestore,collection,getDocs,query,orderBy,limit}from'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 let db=null,ALL={},HIST={};
 async function init(){
-  const pid=localStorage.getItem('ammiq_pid')||'ammiq-pricing';
-  const key=localStorage.getItem('ammiq_key')||'';
-  try{const app=initializeApp({apiKey:key,projectId:pid,authDomain:pid+'.firebaseapp.com'});db=getFirestore(app);await load();}
-  catch(e){console.warn(e.message);loadDemo();}
+  // Hardcoded Firebase config — update these if your project changes
+  const FIREBASE_CONFIG = {
+    apiKey:     localStorage.getItem('ammiq_key') || 'AIzaSyAx4_EwiHOeI7DTh-wdcC0el1Y0VeTLkW8',
+    projectId:  localStorage.getItem('ammiq_pid') || 'ammiq-d63b2',
+    authDomain: (localStorage.getItem('ammiq_pid') || 'ammiq-d63b2') + '.firebaseapp.com',
+  };
+  try{
+    const app=initializeApp(FIREBASE_CONFIG);
+    db=getFirestore(app);
+    await load();
+  } catch(e){
+    console.warn(e.message);
+    loadDemo();
+  }
 }
 async function load(){
   document.getElementById('lu-txt').textContent='Loading…';
