@@ -1,0 +1,69 @@
+name: AMMO IQ Daily Price Scraper
+
+on:
+  schedule:
+    - cron: '0 11 * * *'   # 6am ET (11:00 UTC) daily
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (scrape but do NOT write to Firebase)'
+        required: false
+        default: 'false'
+      component:
+        description: 'Single component ID to run (leave blank for all)'
+        required: false
+        default: ''
+      category:
+        description: 'Single category to run (metals/powders/primers/brass/coatings/factory_ammo)'
+        required: false
+        default: ''
+
+jobs:
+  scrape:
+    name: Scrape Prices
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: scraper/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r scraper/requirements.txt
+
+      - name: Install Playwright browsers
+        run: python -m playwright install chromium --with-deps
+
+      - name: Run scraper
+        env:
+          FIREBASE_CREDENTIALS: ${{ secrets.FIREBASE_CREDENTIALS }}
+          FIREBASE_PROJECT_ID:  ${{ secrets.FIREBASE_PROJECT_ID }}
+          ALERT_EMAIL_FROM:     ${{ secrets.ALERT_EMAIL_FROM }}
+          ALERT_EMAIL_TO:       ${{ secrets.ALERT_EMAIL_TO }}
+          ALERT_EMAIL_PASS:     ${{ secrets.ALERT_EMAIL_PASS }}
+        run: |
+          cd scraper
+          ARGS=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ -n "${{ github.event.inputs.component }}" ]; then ARGS="$ARGS --component ${{ github.event.inputs.component }}"; fi
+          if [ -n "${{ github.event.inputs.category }}" ]; then ARGS="$ARGS --category ${{ github.event.inputs.category }}"; fi
+          python scraper.py $ARGS
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraper-logs-${{ github.run_number }}
+          path: scraper/scraper.log
+          retention-days: 14
+
+      - name: Notify on failure
+        if: failure()
+        run: echo "::warning::AMMO IQ scraper failed on run ${{ github.run_number }}. Check logs."
