@@ -1,0 +1,353 @@
+# ─────────────────────────────────────────────────────────────────
+# AMMO IQ — Component Tracking Configuration
+# Add any component by adding a new entry. No code changes needed.
+# ─────────────────────────────────────────────────────────────────
+
+metals:
+  - id: raw_lead
+    name: Raw Lead
+    unit: lb
+    vendors: [powder_valley, grafs, midsouth, rotometals]
+    search_terms:
+      - "raw lead ingots reloading 25lb"
+      - "pure lead ingots casting"
+
+  - id: lyman_2
+    name: "Lyman #2 Alloy"
+    unit: lb
+    vendors: [powder_valley, grafs, midsouth, rotometals]
+    search_terms:
+      - "Lyman #2 alloy lead"
+      - "lyman 2 casting alloy"
+
+  - id: linotype
+    name: Linotype
+    unit: lb
+    vendors: [powder_valley, grafs, midsouth, rotometals]
+    search_terms:
+      - "linotype lead alloy casting"
+      - "linotype metal reloading"
+
+powders:
+  - id: titegroup
+    name: Titegroup
+    brand: Hodgdon
+    unit: lb
+    vendors: [powder_valley, grafs, midsouth, brownells, lucky_gunner]
+    search_terms:
+      - "Hodgdon Titegroup 1lb powder"
+      - "Titegroup pistol powder"
+
+  - id: accurate_2
+    name: "Accurate #2"
+    brand: "Accurate Powder"
+    unit: lb
+    vendors: [powder_valley, grafs, midsouth]
+    search_terms:
+      - "Accurate No2 powder 1lb"
+      - "Accurate #2 pistol powder"
+
+  - id: n320
+    name: N320
+    brand: Vihtavuori
+    unit: lb
+    vendors: [powder_valley, grafs, midsouth]
+    search_terms:
+      - "Vihtavuori N320 1lb"
+      - "N320 pistol powder"
+
+  - id: bullseye
+    name: Bullseye
+    brand: Alliant
+    unit: lb
+    vendors: [powder_valley, grafs, midsouth, brownells]
+    search_terms:
+      - "Alliant Bullseye powder 1lb"
+      - "Bullseye pistol powder"
+
+primers:
+  - id: cci_sp
+    name: "CCI Small Pistol #500"
+    brand: CCI
+    size: small_pistol
+    unit: "1000"
+    vendors: [powder_valley, grafs, midsouth, lucky_gunner]
+    search_terms:
+      - "CCI 500 small pistol primers 1000"
+      - "CCI SP primers box 1000"
+
+  - id: cci_lp
+    name: "CCI Large Pistol #300"
+    brand: CCI
+    size: large_pistol
+    unit: "1000"
+    vendors: [powder_valley, grafs, midsouth]
+    search_terms:
+      - "CCI 300 large pistol primers 1000"
+
+  - id: federal_sp
+    name: "Federal Small Pistol #100"
+    brand: Federal
+    size: small_pistol
+    unit: "1000"
+    vendors: [powder_valley, grafs, midsouth]
+    search_terms:
+      - "Federal 100 small pistol primers 1000"
+
+  - id: federal_lp
+    name: "Federal Large Pistol #150"
+    brand: Federal
+    size: large_pistol
+    unit: "1000"
+    vendors: [powder_valley, grafs, midsouth]
+    search_terms:
+      - "Federal 150 large pistol primers 1000"
+
+brass:
+  - id: brass_9mm
+    name: "9mm Brass"
+    caliber: 9mm
+    unit: "500"
+    vendors: [powder_valley, grafs, midsouth, starline]
+    search_terms:
+      - "9mm unprimed brass cases 500"
+      - "9x19 brass Starline 500"
+
+  - id: brass_45acp
+    name: "45 ACP Brass"
+    caliber: 45acp
+    unit: "500"
+    vendors: [powder_valley, grafs, midsouth, starline]
+    search_terms:
+      - "45 ACP unprimed brass 500"
+      - "45 auto brass cases Starline"
+
+  - id: brass_38spl
+    name: "38 Special Brass"
+    caliber: 38spl
+    unit: "500"
+    vendors: [powder_valley, grafs, midsouth, starline]
+    search_terms:
+      - "38 special unprimed brass 500"
+      - "38 spl brass Starline 500"
+
+coatings:
+  - id: hitek
+    name: "Hi-Tek Coating"
+    unit: lb
+    vendors: [magnus_bullets, bayou_bullets]
+    search_terms:
+      - "Hi-Tek bullet coating reloading"
+      - "Hi-Tek polymer coating cast bullets"
+
+  - id: powder_coat
+    name: "Powder Coat (Harbor Freight)"
+    unit: lb
+    vendors: [harbor_freight, amazon]
+    search_terms:
+      - "powder coat paint bullet casting"
+      - "eastwood powder coat reloading"
+
+  - id: liquid_alox
+    name: "Liquid Alox Lube"
+    unit: oz
+    vendors: [powder_valley, grafs, midsouth]
+    search_terms:
+      - "Lee Liquid Alox bullet lube"
+      - "liquid alox lube casting"
+
+factory_ammo:
+  # 9mm
+  - id: blazer_9mm_115
+    name: "Blazer Brass 9mm 115gr FMJ"
+    caliber: 9mm
+    grain: 115
+    brand: Blazer
+    type: FMJ
+    unit: "50"
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    ammoseek_url: "https://ammoseek.com/ammo/9mm-luger?s=ppu&gr=115&type=fmj"
+    search_terms:
+      - "Blazer Brass 9mm 115gr FMJ 50 round"
+
+  - id: blazer_9mm_124
+    name: "Blazer Brass 9mm 124gr FMJ"
+    caliber: 9mm
+    grain: 124
+    brand: Blazer
+    type: FMJ
+    unit: "50"
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "Blazer Brass 9mm 124gr FMJ 50"
+
+  - id: sb_9mm_115
+    name: "S&B 9mm 115gr FMJ"
+    caliber: 9mm
+    grain: 115
+    brand: "Sellier & Bellot"
+    type: FMJ
+    unit: "50"
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "Sellier Bellot 9mm 115gr 50 round"
+
+  - id: sb_9mm_124
+    name: "S&B 9mm 124gr FMJ"
+    caliber: 9mm
+    grain: 124
+    brand: "Sellier & Bellot"
+    type: FMJ
+    unit: "50"
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "S&B 9mm 124gr FMJ 50 round"
+
+  - id: federal_9mm_115
+    name: "Federal American Eagle 9mm 115gr"
+    caliber: 9mm
+    grain: 115
+    brand: Federal
+    type: FMJ
+    unit: "50"
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "Federal American Eagle 9mm 115gr 50"
+
+  - id: winchester_9mm_115
+    name: "Winchester USA 9mm 115gr FMJ"
+    caliber: 9mm
+    grain: 115
+    brand: Winchester
+    type: FMJ
+    unit: "50"
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "Winchester USA 9mm 115gr FMJ 50"
+
+  - id: fiocchi_9mm_115
+    name: "Fiocchi 9mm 115gr FMJ"
+    caliber: 9mm
+    grain: 115
+    brand: Fiocchi
+    type: FMJ
+    unit: "50"
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "Fiocchi 9mm 115gr FMJ 50"
+
+  - id: sig_9mm_124
+    name: "Sig Sauer 9mm 124gr FMJ"
+    caliber: 9mm
+    grain: 124
+    brand: "Sig Sauer"
+    type: FMJ
+    unit: "50"
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "Sig Sauer Elite Ball 9mm 124gr 50"
+
+  - id: wolf_9mm_115
+    name: "Wolf 9mm 115gr FMJ"
+    caliber: 9mm
+    grain: 115
+    brand: Wolf
+    type: FMJ
+    unit: "50"
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "Wolf 9mm 115gr FMJ steel case 50"
+
+  # 22 LR (no reloading — track for cost comparison only)
+  - id: cci_22lr_std
+    name: "CCI Standard 22 LR 40gr"
+    caliber: 22lr
+    grain: 40
+    brand: CCI
+    type: LRN
+    unit: "50"
+    no_reload: true
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "CCI Standard 22LR 40gr 50 round"
+
+  - id: federal_22lr
+    name: "Federal AutoMatch 22 LR"
+    caliber: 22lr
+    grain: 40
+    brand: Federal
+    type: LRN
+    unit: "325"
+    no_reload: true
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "Federal AutoMatch 22LR 325 round"
+
+  # 38 Special
+  - id: federal_38spl_130
+    name: "Federal 38 Special 130gr FMJ"
+    caliber: 38spl
+    grain: 130
+    brand: Federal
+    type: FMJ
+    unit: "50"
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "Federal 38 Special 130gr FMJ 50"
+
+  - id: winchester_38spl
+    name: "Winchester USA 38 Special 130gr FMJ"
+    caliber: 38spl
+    grain: 130
+    brand: Winchester
+    type: FMJ
+    unit: "50"
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "Winchester 38 Special 130gr FMJ 50"
+
+  # 357 Magnum
+  - id: federal_357_158
+    name: "Federal 357 Magnum 158gr JSP"
+    caliber: 357mag
+    grain: 158
+    brand: Federal
+    type: JSP
+    unit: "50"
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "Federal 357 Magnum 158gr JSP 50"
+
+  # 45 ACP
+  - id: blazer_45acp_230
+    name: "Blazer Brass 45 ACP 230gr FMJ"
+    caliber: 45acp
+    grain: 230
+    brand: Blazer
+    type: FMJ
+    unit: "50"
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "Blazer Brass 45 ACP 230gr FMJ 50"
+
+  - id: federal_45acp_230
+    name: "Federal American Eagle 45 ACP 230gr"
+    caliber: 45acp
+    grain: 230
+    brand: Federal
+    type: FMJ
+    unit: "50"
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "Federal American Eagle 45 ACP 230gr 50"
+
+  - id: winchester_45acp_230
+    name: "Winchester USA 45 ACP 230gr FMJ"
+    caliber: 45acp
+    grain: 230
+    brand: Winchester
+    type: FMJ
+    unit: "50"
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "Winchester USA 45 ACP 230gr FMJ 50"
