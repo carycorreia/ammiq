@@ -328,7 +328,7 @@ function card(c){
   const maxV=Math.max(...vals,0.001);
   const spark=vals.length>2?`<div class="sparkline">${vals.map(v=>`<div class="spark-bar" style="height:${Math.max(3,Math.round((v/maxV)*34))}px;"></div>`).join('')}</div>`:'';
   return `<div class="price-card al-${al}" data-cat="${cat}" data-cal="${c.caliber||''}" onclick="showDetail('${c.component_id}')">
-    <div class="pc-header"><div><div class="pc-name">${c.component_name}</div><div class="pc-cat">${cat.replace('_',' ')}</div></div><div class="alert-badge ab-${al}">${atxt}</div></div>
+    <div class="pc-header"><div><div class="pc-name">${c.component_name||c.name}</div><div class="pc-cat">${cat.replace('_',' ')}</div></div><div class="alert-badge ab-${al}">${atxt}</div></div>
     <div class="pc-price"><div class="pc-price-big">${fp(c.best_per_unit)}</div><div class="pc-price-unit">/ ${c.best_unit||''}</div></div>
     <div class="pc-vendor">${c.best_vendor||'—'}${c.best_url?` · <a href="${c.best_url}" target="_blank" onclick="event.stopPropagation()">Buy →</a>`:''}</div>
     <div class="trend-row"><span>7d: ${tH(c.trend_7d)}</span><span>30d: ${tH(c.trend_30d)}</span></div>${spark}
@@ -354,7 +354,7 @@ window.filterAmmo=(cal,btn)=>{document.querySelectorAll('#page-ammo .filter-row 
 function renderBvB(){
   const ammo=Object.values(ALL).filter(c=>getCat(c)==='factory_ammo');
   document.getElementById('bvb-table').innerHTML=ammo.map(a=>`<tr>
-    <td class="td-name">${a.component_name}</td><td>${a.caliber||'—'}</td><td>${a.grain||'—'}</td>
+    <td class="td-name">${a.component_name||a.name||a.name}</td><td>${a.caliber||'—'}</td><td>${a.grain||'—'}</td>
     <td style="font-family:var(--font-mono);">$${((a.best_per_unit||0)*parseFloat(a.best_unit||50)).toFixed(2)}</td>
     <td style="font-family:var(--font-mono);color:var(--accent);">$${(a.best_per_unit||0).toFixed(4)}</td>
     <td>${a.best_vendor||'—'}</td><td>${tH(a.trend_7d)}</td>
@@ -382,11 +382,11 @@ window.calcBvB=()=>{
     const match=Object.values(ALL).filter(a=>getCat(a)==='factory_ammo'&&a.caliber===caliber&&a.best_per_unit).sort((a,b)=>a.best_per_unit-b.best_per_unit)[0];
     if(match){
       document.getElementById('bvb-fac').textContent='$'+match.best_per_unit.toFixed(4);
-      document.getElementById('bvb-fac-d').textContent=match.component_name+' @ '+match.best_vendor;
+      document.getElementById('bvb-fac-d').textContent=(match.component_name||match.name||match.name)+' @ '+match.best_vendor;
       const sav=match.best_per_unit-tot;
       const v=document.getElementById('bvb-verdict');v.style.display='block';
       v.className=sav>0?'verdict':'verdict bad';
-      v.innerHTML=sav>0?`✅ Handloading saves <strong>$${sav.toFixed(4)}/round</strong> — <strong>$${(sav*500).toFixed(2)} per 500 rounds</strong> vs ${match.component_name}.`:`⚠ Factory ammo is cheaper by <strong>$${Math.abs(sav).toFixed(4)}/round</strong> right now. Check your component prices.`;
+      v.innerHTML=sav>0?`✅ Handloading saves <strong>$${sav.toFixed(4)}/round</strong> — <strong>$${(sav*500).toFixed(2)} per 500 rounds</strong> vs ${match.component_name||match.name||match.name}.`:`⚠ Factory ammo is cheaper by <strong>$${Math.abs(sav).toFixed(4)}/round</strong> right now. Check your component prices.`;
     }
   }
 };
@@ -401,7 +401,7 @@ function renderCharts(){
     }).join(''):`<div style="color:var(--text3);font-size:12px;padding:20px;">Not enough history yet.</div>`;
     const now=vals[vals.length-1]||0;
     return `<div class="chart-container" data-cat="${cat}">
-      <div class="chart-title">${c.component_name}</div>
+      <div class="chart-title">${c.component_name||c.name||c.name}</div>
       <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);margin-bottom:8px;font-family:var(--font-mono);"><span>Min ${fp(minV)}</span><span>Now ${fp(now)}</span><span>Max ${fp(maxV)}</span></div>
       <div class="chart-area">${bars}</div>
     </div>`;
@@ -409,7 +409,7 @@ function renderCharts(){
 }
 window.filterCharts=(cat,btn)=>{document.querySelectorAll('#page-charts .filter-row .chip').forEach(b=>b.classList.remove('active'));btn.classList.add('active');document.querySelectorAll('#charts-grid .chart-container').forEach(c=>{c.style.display=(cat==='all'||c.dataset.cat===cat)?'':'none';});};
 function renderSettings(){
-  document.getElementById('comp-list-settings').innerHTML=Object.values(ALL).map(c=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;"><div><div style="font-weight:600;color:var(--text);">${c.component_name}</div><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text3);">${getCat(c).replace('_',' ')}</div></div><div style="font-family:var(--font-mono);font-size:13px;color:var(--accent);">${fp(c.best_per_unit)} / ${c.best_unit}</div></div>`).join('')||'<div style="color:var(--text3);font-size:13px;">No components yet.</div>';
+  document.getElementById('comp-list-settings').innerHTML=Object.values(ALL).map(c=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;"><div><div style="font-weight:600;color:var(--text);">${c.component_name||c.name}</div><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text3);">${getCat(c).replace('_',' ')}</div></div><div style="font-family:var(--font-mono);font-size:13px;color:var(--accent);">${fp(c.best_per_unit)} / ${c.best_unit}</div></div>`).join('')||'<div style="color:var(--text3);font-size:13px;">No components yet.</div>';
 }
 window.showDetail=id=>{
   const c=ALL[id];if(!c)return;
@@ -418,7 +418,7 @@ window.showDetail=id=>{
   modal.style.cssText='position:fixed;inset:0;background:rgba(30,58,66,0.78);backdrop-filter:blur(3px);z-index:200;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;';
   modal.innerHTML=`<div style="background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.22);width:100%;max-width:560px;padding:28px;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-      <div style="font-family:var(--font-display);font-size:26px;letter-spacing:2px;color:var(--header);">${c.component_name}</div>
+      <div style="font-family:var(--font-display);font-size:26px;letter-spacing:2px;color:var(--header);">${c.component_name||c.name}</div>
       <button id="md-close" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text3);">✕</button>
     </div>
     <div style="font-family:var(--font-display);font-size:44px;color:var(--accent);margin-bottom:4px;">${fp(c.best_per_unit)} / ${c.best_unit}</div>
