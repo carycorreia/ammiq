@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AMMO IQ — Daily Price Harvester v2.3
+AMMO IQ — Daily Price Harvester v2.5
 Playwright + email alerts + dry-run mode.
 
 Usage:
@@ -11,17 +11,22 @@ Usage:
   python scraper.py --no-email            # suppress alert emails
 
 Changelog:
-  v2.3 — All vendor URLs and selectors confirmed via live diagnostic.
-          Grafs: new URL /retail/catalog/search?keywords= + price-anchor strategy.
-          Lucky Gunner: switched to Playwright + caliber category URL map.
-          Rotometals: BigCommerce URL /search.php?search_query= + li.product selector.
-          Midsouth: correct URL /search?SearchTerm= + .product card selector.
-          Powder Valley: new domain powdervalley.com + Playwright + ais-Hits-item selector.
-  v2.2 — Fixed Rotometals URL (removed &type=product). Added eBay scraper.
-          Metals updated to [rotometals, ebay] only.
-  v2.1 — Fixed Midsouth fragment URL. Switched Brownells to Playwright.
-          Added rotometals, starline, magnus_bullets, bayou_bullets, harbor_freight.
-          Hardened all selectors with fallback chains.
+  v2.5 — Powder Valley: added keyword relevance filter (same as Midsouth).
+          Added CATEGORY_MIN_PER_UNIT price floor — powders < $15/lb, primers
+          < $0.04/ea, etc. are silently dropped. Fixes $8.99 Bullseye from
+          Midsouth and similar false matches that survive keyword filtering
+          because "Bullseye" appears in unrelated product names.
+  v2.4 — Midsouth: added keyword relevance filter — accessories at $3.99 no
+          longer pollute powder/primer results. Only products whose URL or title
+          contains a keyword from the search term are kept.
+          Grafs: fixed link_pattern from full-domain to relative path
+          (/retail/catalog/product) — price-anchor was finding prices but
+          failing to match relative hrefs.
+  v2.3 — All vendor URLs confirmed via live diagnostic. Grafs new URL, Lucky
+          Gunner Playwright + caliber map, Rotometals BigCommerce URL,
+          Midsouth SearchTerm URL, Powder Valley new domain + Playwright.
+  v2.2 — Fixed Rotometals URL. Added eBay scraper. Metals → [rotometals, ebay].
+  v2.1 — Fixed Midsouth fragment URL. Added 5 new vendor scrapers.
 """
 
 import os, sys, json, re, time, logging, datetime, argparse, smtplib, asyncio
@@ -63,13 +68,32 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
-# Lucky Gunner uses category URLs per caliber, not a search endpoint.
+# Lucky Gunner uses per-caliber category pages, not a search endpoint.
 LG_CALIBER_URLS = {
     "9mm":    "https://www.luckygunner.com/handgun/9mm-ammo",
     "45acp":  "https://www.luckygunner.com/handgun/45-acp-ammo",
     "38spl":  "https://www.luckygunner.com/handgun/38-special-ammo",
     "357mag": "https://www.luckygunner.com/handgun/357-magnum-ammo",
     "22lr":   "https://www.luckygunner.com/rimfire/22-lr-ammo",
+}
+
+# Words too generic to use as relevance keywords.
+_STOP_WORDS = {
+    "1lb", "1", "lb", "lbs", "powder", "box", "round", "rounds",
+    "gr", "grain", "grains", "fmj", "ammo", "ammunition", "50",
+    "100", "500", "1000", "pistol", "rifle", "smokeless",
+}
+
+# Minimum realistic per-unit price by category. Anything below this is a
+# false match (an accessory, a target, a cleaning kit, etc.).
+# per_unit = price / qty, where qty is the unit count (1 lb, 1000 primers, etc.)
+CATEGORY_MIN_PER_UNIT = {
+    "powders":      15.0,   # $/lb  — even economy bulk is ~$18+
+    "primers":       0.04,  # $/ea  — below $40/1000 is impossible
+    "metals":        0.75,  # $/lb  — lead ingots start ~$1.50/lb
+    "brass":         0.05,  # $/case
+    "factory_ammo":  0.10,  # $/round
+    "coatings":      3.0,   # $/lb
 }
 
 # ── Data class ────────────────────────────────────────────────────
@@ -116,8 +140,8 @@ def init_firebase():
 _PRICE_RE = re.compile(r"\$?([\d,]+\.[\d]{2})")
 
 def parse_price(text: str) -> Optional[float]:
+    """Parse a price string, handling ranges like '$40.95 - $304.95' (takes lower)."""
     text = text.strip().replace(",", "")
-    # Handle ranges like "$40.95 - $304.95" — take the lower value
     parts = text.split(" - ")
     m = _PRICE_RE.search(parts[0])
     return float(m.group(1).replace(",", "")) if m else None
@@ -134,6 +158,17 @@ def first_el(card, selectors: list):
         if el:
             return el
     return None
+
+def keywords_for(term: str) -> set:
+    """Return meaningful keywords from a search term, dropping stop words."""
+    return {w.lower() for w in term.split() if w.lower() not in _STOP_WORDS}
+
+def is_relevant(text: str, keywords: set) -> bool:
+    """Return True if text contains at least one of the keywords."""
+    if not keywords:
+        return True
+    text = text.lower()
+    return any(kw in text for kw in keywords)
 
 def fetch_static(url: str) -> Optional[BeautifulSoup]:
     try:
@@ -177,15 +212,11 @@ def price_anchor_offers(soup, vendor_name, component, link_domain,
                         price_selector=None, link_pattern=None, max_results=5):
     """
     Find products by locating price elements and walking up the DOM to find
-    the nearest ancestor that contains a product link. Used for sites where
-    the product card class names are non-standard (Grafs, Lucky Gunner).
-
-    price_selector: CSS selector for price elements (e.g. 'span.price')
-                    If None, finds <span> elements whose text looks like a price.
-    link_pattern:   Regex pattern that product hrefs must match.
+    the nearest ancestor containing a product link. Used for sites with
+    non-standard product card markup (Grafs, Lucky Gunner).
     """
     offers = []
-    seen  = set()
+    seen   = set()
 
     if price_selector:
         price_els = soup.select(price_selector)
@@ -201,14 +232,13 @@ def price_anchor_offers(soup, vendor_name, component, link_domain,
         if not price:
             continue
 
-        # Walk up DOM to find a container that has a product link
         container = price_el
         link_el   = None
         for _ in range(10):
             container = container.parent
             if not container or container.name in ("html", "body", "[document]"):
                 break
-            pattern = link_pattern or rf"{re.escape(link_domain)}"
+            pattern   = link_pattern or r"."
             candidates = container.find_all("a", href=re.compile(pattern))
             if candidates:
                 link_el = candidates[0]
@@ -241,9 +271,12 @@ def price_anchor_offers(soup, vendor_name, component, link_domain,
 
 def scrape_powder_valley(component):
     """
-    Powder Valley — domain changed to powdervalley.com, now JS-rendered.
-    Uses Playwright. Products in li.ais-Hits-item.product (Algolia search widget).
-    Price may be a range like "$40.95 - $304.95" — parse_price() takes the lower.
+    Powder Valley — powdervalley.com (domain changed from powdervalleyinc.com).
+    JS-rendered via Algolia search widget. Card: li.ais-Hits-item.product.
+    Price may be a range ("$40.95 - $304.95") — parse_price() takes the lower.
+    FIX v2.5: Added keyword relevance filter — same as Midsouth fix. Algolia
+    returns 10 results including accessories; only keep cards whose link href
+    or title text contains a keyword from the search term.
     """
     offers = []
     for term in component.get("search_terms", [])[:2]:
@@ -252,17 +285,22 @@ def scrape_powder_valley(component):
         soup = fetch_js(url, wait_selector="li.ais-Hits-item, li.product", wait_ms=4000)
         if not soup:
             continue
+        kws   = keywords_for(term)
         cards = soup.select("li.ais-Hits-item.product, li.ais-Hits-item, li.product")
-        for card in cards[:5]:
+        for card in cards[:10]:
             price_el = first_el(card, [".price", ".amount", "span.price"])
             link_el  = card.select_one("a[href*='/product/'], a.prod-img-w, a[href]")
             if not price_el or not link_el:
+                continue
+            href       = link_el["href"]
+            title_attr = link_el.get("title", "") or link_el.get_text(strip=True)
+            check_text = (href + " " + title_attr).lower()
+            if not is_relevant(check_text, kws):
                 continue
             price = parse_price(price_el.get_text())
             if not price:
                 continue
             qty  = get_qty(component)
-            href = link_el["href"]
             if href.startswith("/"):
                 href = "https://www.powdervalley.com" + href
             offers.append(PriceOffer(
@@ -275,11 +313,10 @@ def scrape_powder_valley(component):
 
 def scrape_grafs(component):
     """
-    Graf & Sons — confirmed URL: /retail/catalog/search?keywords=<term>
-    Products are in a custom catalog layout with no standard product card class.
-    Uses price-anchor strategy: finds <span> price elements and walks up DOM
-    to locate the nearest product link container.
-    Confirmed prices: $40.99 / $156.99 / $307.99 for Titegroup 1lb/5lb/8lb.
+    Graf & Sons — /retail/catalog/search?keywords=<term>
+    Uses price-anchor strategy. FIX v2.4: link_pattern now matches relative
+    hrefs (/retail/catalog/product/...) instead of requiring the full domain,
+    which was why price-anchor was finding prices but returning no offers.
     """
     offers = []
     for term in component.get("search_terms", [])[:2]:
@@ -290,7 +327,7 @@ def scrape_grafs(component):
         found = price_anchor_offers(
             soup, "Grafs", component,
             link_domain="https://www.grafs.com",
-            link_pattern=r"grafs\.com/retail/catalog/product",
+            link_pattern=r"/retail/catalog/product",   # relative path — fixed in v2.4
         )
         offers.extend(found)
     return offers
@@ -298,10 +335,11 @@ def scrape_grafs(component):
 
 def scrape_midsouth(component):
     """
-    Midsouth Shooters Supply — confirmed URL: /search?SearchTerm=<term>
-    JS-rendered, uses Playwright. Products in div.product (3 results per search
-    for multiple pack sizes). Price in first <span> with $ pattern inside card.
-    Confirmed: Titegroup 1lb=$41.99, 5lb=$159.99, 8lb=$313.99.
+    Midsouth Shooters Supply — /search?SearchTerm=<term>, Playwright.
+    FIX v2.4: Added keyword relevance filter. Midsouth search returns ~12
+    results including unrelated accessories at $3.99. Only products whose
+    URL or title contains a keyword from the search term are kept.
+    Confirmed working: Titegroup 1lb=$41.99, 5lb=$159.99, 8lb=$313.99.
     """
     offers = []
     for term in component.get("search_terms", [])[:2]:
@@ -310,23 +348,38 @@ def scrape_midsouth(component):
         soup = fetch_js(url, wait_selector=".product-wrapper, .product", wait_ms=5000)
         if not soup:
             continue
+
+        # Keywords for relevance filtering (e.g. "hodgdon titegroup 1lb" → {"hodgdon","titegroup"})
+        kws = keywords_for(term)
+
         cards = soup.select(".product")
-        for card in cards[:6]:
-            # Price is in a bare <span> with no class — find first one matching $ pattern
+        for card in cards[:8]:
+            link_el = card.select_one("a[href*='/item/'], a[href]")
+            if not link_el:
+                continue
+
+            # Relevance check: product URL or title must contain a keyword
+            href  = link_el["href"]
+            title_attr = link_el.get("title", "")
+            check_text = (href + " " + title_attr).lower()
+            if not is_relevant(check_text, kws):
+                continue
+
+            # Find price: first <span> whose full text is a price
             price_el = None
             for span in card.find_all("span"):
-                text = span.get_text(strip=True)
-                if _PRICE_RE.match(text) or text.startswith("$"):
+                t = span.get_text(strip=True)
+                if t.startswith("$") and _PRICE_RE.match(t):
                     price_el = span
                     break
-            link_el = card.select_one("a[href*='/item/'], a[href]")
-            if not price_el or not link_el:
+
+            if not price_el:
                 continue
             price = parse_price(price_el.get_text())
             if not price:
                 continue
-            qty  = get_qty(component)
-            href = link_el["href"]
+
+            qty = get_qty(component)
             if href.startswith("/"):
                 href = "https://www.midsouthshooterssupply.com" + href
             offers.append(PriceOffer(
@@ -339,13 +392,9 @@ def scrape_midsouth(component):
 
 def scrape_lucky_gunner(component):
     """
-    Lucky Gunner — JS-rendered, requires Playwright.
-    Does NOT have a search endpoint — uses caliber category pages (e.g. /handgun/9mm-ammo).
-    Price elements confirmed as <span class='price'> and <span class='regular-price'>.
-    Uses price-anchor strategy to find product containers.
-    Only works for components with a 'caliber' field (factory ammo). Returns []
-    for reloading components (powders, primers, brass) — remove lucky_gunner
-    from those vendors lists in components.yaml.
+    Lucky Gunner — JS-rendered, Playwright. Caliber category pages only.
+    No search endpoint exists. Only works for components with a 'caliber' field.
+    Price elements: span.price and span.regular-price (confirmed via diagnostic).
     """
     caliber = component.get("caliber", "")
     if not caliber:
@@ -362,10 +411,12 @@ def scrape_lucky_gunner(component):
     if not soup:
         return []
 
-    # Filter to the specific brand/product using search_terms
-    search_keywords = []
+    brand = component.get("brand", "").lower()
+    kws   = set()
     for term in component.get("search_terms", []):
-        search_keywords.extend(term.lower().split())
+        kws |= keywords_for(term)
+    if brand:
+        kws.add(brand.lower())
 
     offers = price_anchor_offers(
         soup, "Lucky Gunner", component,
@@ -375,23 +426,17 @@ def scrape_lucky_gunner(component):
         max_results=8,
     )
 
-    # Filter offers to only those matching the tracked product's keywords
-    brand = component.get("brand", "").lower()
-    grain = str(component.get("grain", ""))
-    filtered = []
-    for offer in offers:
-        # Try to find the product title near the offer URL
-        link_el = soup.find("a", href=lambda h: h and offer.url in h)
-        title = link_el.get_text(strip=True).lower() if link_el else ""
-        if brand and brand not in title and not any(k in title for k in brand.split()):
-            continue
-        filtered.append(offer)
+    # Filter to products matching the tracked brand
+    if brand and offers:
+        filtered = [o for o in offers if is_relevant(o.url, {brand})]
+        if filtered:
+            return filtered
 
-    return filtered if filtered else offers[:3]
+    return offers[:3]
 
 
 def scrape_ammoseek(component):
-    """AmmoSeek — JS-rendered aggregator, Playwright. Returns cost-per-round rows."""
+    """AmmoSeek — JS-rendered aggregator, Playwright."""
     caliber = component.get("caliber", "")
     if not caliber:
         return []
@@ -490,10 +535,10 @@ def scrape_brownells(component):
 
 def scrape_rotometals(component):
     """
-    Rotometals — BigCommerce store (not Shopify as previously assumed).
-    Confirmed URL: /search.php?search_query=<term>&section=product
-    Confirmed card: li.product > article.card
-    Confirmed price: span.price.price--withoutTax.price--main
+    Rotometals — BigCommerce. Confirmed URL, card, and price selectors.
+    URL:   /search.php?search_query=<term>&section=product
+    Card:  li.product > article.card
+    Price: span.price--withoutTax.price--main
     """
     offers = []
     for term in component.get("search_terms", [])[:2]:
@@ -501,8 +546,7 @@ def scrape_rotometals(component):
         soup = fetch_static(url)
         if not soup:
             continue
-        cards = soup.select("li.product")
-        for card in cards[:5]:
+        for card in soup.select("li.product")[:5]:
             price_el = first_el(card, [
                 ".price--withoutTax.price--main",
                 ".price.price--main",
@@ -529,9 +573,8 @@ def scrape_rotometals(component):
 
 def scrape_ebay(component):
     """
-    eBay — Buy It Now listings sorted by price+shipping lowest first.
-    LH_BIN=1 (Buy It Now only), _sop=15 (price+ship low→high), LH_ItemCondition=3 (New).
-    Adds shipping cost to price when not free.
+    eBay — Buy It Now, sorted by price+shipping lowest first.
+    LH_BIN=1, _sop=15, LH_ItemCondition=3 (New only).
     """
     offers = []
     for term in component.get("search_terms", [])[:2]:
@@ -555,12 +598,10 @@ def scrape_ebay(component):
             price = parse_price(price_el.get_text().split(" to ")[0])
             if not price:
                 continue
-            if ship_el:
-                ship_text = ship_el.get_text().lower()
-                if "free" not in ship_text:
-                    ship_cost = parse_price(ship_el.get_text())
-                    if ship_cost:
-                        price += ship_cost
+            if ship_el and "free" not in ship_el.get_text().lower():
+                ship_cost = parse_price(ship_el.get_text())
+                if ship_cost:
+                    price += ship_cost
             qty = get_qty(component)
             offers.append(PriceOffer(
                 "eBay", price, qty,
@@ -579,8 +620,7 @@ def scrape_starline(component):
         soup = fetch_static(url)
         if not soup:
             continue
-        cards = soup.select(".product-card, .product-item, .product, li.product")
-        for card in cards[:5]:
+        for card in soup.select(".product-card, .product-item, .product, li.product")[:5]:
             price_el = first_el(card, [
                 ".product-price", ".woocommerce-Price-amount", ".price bdi", ".price",
             ])
@@ -605,15 +645,14 @@ def scrape_starline(component):
 
 
 def scrape_magnus_bullets(component):
-    """Magnus Bullets — WooCommerce shop for Hi-Tek coated cast bullets."""
+    """Magnus Bullets — WooCommerce, Hi-Tek coated cast bullets."""
     offers = []
     for term in component.get("search_terms", [])[:2]:
         url  = f"https://www.magnusbullets.com/?s={requests.utils.quote(term)}&post_type=product"
         soup = fetch_static(url)
         if not soup:
             continue
-        cards = soup.select("li.product, .product, .product-small")
-        for card in cards[:5]:
+        for card in soup.select("li.product, .product, .product-small")[:5]:
             price_el = first_el(card, [
                 ".woocommerce-Price-amount bdi", ".woocommerce-Price-amount",
                 ".price ins .amount", ".price",
@@ -635,15 +674,14 @@ def scrape_magnus_bullets(component):
 
 
 def scrape_bayou_bullets(component):
-    """Bayou Bullets — WooCommerce shop for Hi-Tek coated cast bullets."""
+    """Bayou Bullets — WooCommerce, Hi-Tek coated cast bullets."""
     offers = []
     for term in component.get("search_terms", [])[:2]:
         url  = f"https://bayoubullets.com/?s={requests.utils.quote(term)}&post_type=product"
         soup = fetch_static(url)
         if not soup:
             continue
-        cards = soup.select("li.product, .product, .product-small")
-        for card in cards[:5]:
+        for card in soup.select("li.product, .product, .product-small")[:5]:
             price_el = first_el(card, [
                 ".woocommerce-Price-amount bdi", ".woocommerce-Price-amount",
                 ".price ins .amount", ".price",
@@ -665,7 +703,7 @@ def scrape_bayou_bullets(component):
 
 
 def scrape_harbor_freight(component):
-    """Harbor Freight — powder coat supplies. May be blocked by Cloudflare."""
+    """Harbor Freight — powder coat. May be blocked by Cloudflare."""
     offers = []
     for term in component.get("search_terms", [])[:1]:
         url  = f"https://www.harborfreight.com/catalogsearch/result/?q={requests.utils.quote(term)}"
@@ -674,10 +712,9 @@ def scrape_harbor_freight(component):
             continue
         title_tag = soup.find("title")
         if title_tag and "just a moment" in title_tag.get_text().lower():
-            log.warning("  Harbor Freight: Cloudflare challenge detected — scraper blocked.")
+            log.warning("  Harbor Freight: Cloudflare challenge — scraper blocked.")
             return []
-        cards = soup.select("[data-qa='product-card'], .grid-item, .product-card, .product-item")
-        for card in cards[:5]:
+        for card in soup.select("[data-qa='product-card'], .grid-item, .product-card")[:5]:
             price_el = first_el(card, [".price-current", "[data-qa='price']", ".price"])
             link_el  = card.select_one("a[href]")
             if not price_el:
@@ -698,11 +735,8 @@ def scrape_harbor_freight(component):
 
 
 def scrape_amazon(component):
-    """Amazon — blocked by bot detection. Returns nothing."""
-    log.warning(
-        "  Amazon scraping is blocked. Remove 'amazon' from this component's "
-        "vendors in components.yaml."
-    )
+    """Amazon — blocked by bot detection. Remove from components.yaml vendors."""
+    log.warning("  Amazon scraping is blocked. Remove 'amazon' from vendors in components.yaml.")
     return []
 
 
@@ -846,9 +880,7 @@ def send_alert_email(alerts):
         host = os.environ.get("ALERT_SMTP_HOST", "smtp.gmail.com")
         port = int(os.environ.get("ALERT_SMTP_PORT", "587"))
         with smtplib.SMTP(host, port) as s:
-            s.ehlo()
-            s.starttls()
-            s.login(frm, pwd)
+            s.ehlo(); s.starttls(); s.login(frm, pwd)
             s.sendmail(frm, to, msg.as_string())
         log.info(f"  ✉  Alert email sent to {to}")
     except Exception as e:
@@ -861,7 +893,7 @@ def run_scraper():
         log.setLevel(logging.DEBUG)
 
     log.info("=" * 60)
-    log.info(f"AMMO IQ Scraper v2.3 — {TODAY}")
+    log.info(f"AMMO IQ Scraper v2.5 — {TODAY}")
     if args.dry_run:
         log.info("*** DRY RUN — Firebase will NOT be written ***")
     log.info("=" * 60)
@@ -921,6 +953,18 @@ def run_scraper():
                 log.warning(f"  ✗ No data: {comp_name}")
                 stats["no_data"] += 1
                 continue
+
+            # Drop offers that are unrealistically cheap (accessories, targets, etc.)
+            floor = CATEGORY_MIN_PER_UNIT.get(category, 0)
+            if floor > 0:
+                floored = [o for o in all_offers if o.per_unit >= floor]
+                if floored:
+                    dropped = len(all_offers) - len(floored)
+                    if dropped:
+                        log.debug(f"  Price floor ${floor}/unit dropped {dropped} offer(s)")
+                    all_offers = floored
+                else:
+                    log.warning(f"  Price floor ${floor}/unit would drop ALL offers — keeping originals")
 
             try:
                 in_stock      = [o for o in all_offers if o.in_stock] or all_offers
