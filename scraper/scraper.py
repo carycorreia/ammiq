@@ -147,10 +147,22 @@ def parse_price(text: str) -> Optional[float]:
     return float(m.group(1).replace(",", "")) if m else None
 
 def get_qty(component: dict, default: float = 1.0) -> float:
+    """Return the expected package quantity for per-unit price calculation.
+    Reads the 'qty' key from the component dict (e.g. qty: 25 for a 25lb
+    lead ingot). Falls back to default (1.0) if not set or not a number."""
     try:
-        return float(component.get("unit", default))
+        return float(component.get("qty", default))
     except (ValueError, TypeError):
         return default
+
+
+def parse_weight_lbs(text: str) -> float:
+    """Extract a weight in lbs from a product title.
+    '25 Lb Pure Lead' → 25.0, '5-lb ingot' → 5.0, '1 pound' → 1.0
+    Returns 0.0 if nothing found."""
+    text = text.lower()
+    m = re.search(r'([\d]+(?:\.\d+)?)\s*(?:lb|lbs|pound|pounds)', text)
+    return float(m.group(1)) if m else 0.0
 
 def first_el(card, selectors: list):
     for sel in selectors:
@@ -559,7 +571,12 @@ def scrape_rotometals(component):
             price = parse_price(price_el.get_text())
             if not price:
                 continue
-            qty  = get_qty(component)
+            # Try to get weight from product title — more reliable than qty
+            # field alone (e.g. "Pure Lead Ingot 25 Lbs" → 25.0)
+            title_el = card.select_one(".card-title, .card-body .card-title, h4, h3, a[aria-label]")
+            title_text = title_el.get_text() if title_el else ""
+            title_lbs = parse_weight_lbs(title_text)
+            qty = title_lbs if title_lbs >= 1.0 else get_qty(component)
             href = link_el["href"]
             if href.startswith("/"):
                 href = "https://www.rotometals.com" + href
@@ -798,6 +815,27 @@ def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=
         log.warning(f"  No offers — skipping {comp_name}")
         return None
     in_stock = [o for o in offers if o.in_stock] or offers
+
+    # Price ceiling — drop unrealistically expensive results before picking best
+    _CEIL = {
+        "metals":       12.0,   # raw lead $1.50-4, Lyman #2 ~$6, Linotype ~$10
+        "powders":      80.0,   # Vihtavuori tops out ~$70/lb
+        "primers":       0.25,  # match-grade primers ~$0.12-0.18/ea
+        "brass":        10.0,   # per case
+        "factory_ammo":  3.0,   # per round
+        "coatings":     50.0,   # per lb
+    }
+    _ceil = _CEIL.get(category, 0)
+    if _ceil > 0:
+        _ceiled = [o for o in in_stock if o.per_unit <= _ceil]
+        if _ceiled:
+            _dropped = len(in_stock) - len(_ceiled)
+            if _dropped:
+                log.debug(f"  Price ceiling ${_ceil}/unit dropped {_dropped} offer(s)")
+            in_stock = _ceiled
+        else:
+            log.warning(f"  Price ceiling ${_ceil}/unit would drop ALL offers — keeping originals")
+
     best     = min(in_stock, key=lambda o: o.per_unit)
     snapshot = {
         "date":           TODAY,     "component_id":   comp_id,
