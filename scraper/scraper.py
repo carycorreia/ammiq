@@ -148,12 +148,35 @@ def parse_price(text: str) -> Optional[float]:
 
 def get_qty(component: dict, default: float = 1.0) -> float:
     """Return the expected package quantity for per-unit price calculation.
-    Reads the 'qty' key from the component dict (e.g. qty: 25 for a 25lb
-    lead ingot). Falls back to default (1.0) if not set or not a number."""
+
+    Priority:
+      1. Explicit 'qty' key  — e.g. qty: 25 for a 25 lb metal ingot lot
+      2. Numeric 'unit' key  — e.g. unit: 1000 (primers), unit: 500 (brass)
+      3. default (1.0)       — e.g. unit: "lb" or unit: "oz" for powders/coatings
+
+    This ensures:
+      • Metals   (unit:"lb",  qty:25)  → 25.0  → $37.50 / 25 = $1.50/lb  ✓
+      • Primers  (unit:"1000", no qty) → 1000  → $56.99 / 1000 = $0.057/ea ✓
+      • Brass    (unit:"500",  no qty) → 500   → $3.99 / 500 = $0.008/case ✓
+      • Powders  (unit:"lb",   no qty) → 1.0   → $24.95 / 1 = $24.95/lb  ✓
+    """
+    # 1. Explicit qty field takes priority
+    if "qty" in component:
+        try:
+            v = float(component["qty"])
+            if v > 0:
+                return v
+        except (ValueError, TypeError):
+            pass
+    # 2. Fall back to unit if it parses as a positive number
     try:
-        return float(component.get("qty", default))
+        v = float(component.get("unit", ""))
+        if v > 0:
+            return v
     except (ValueError, TypeError):
-        return default
+        pass
+    # 3. Default
+    return default
 
 
 def parse_weight_lbs(text: str) -> float:
