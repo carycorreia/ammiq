@@ -132,7 +132,7 @@ def init_firebase():
             sys.exit(1)
         cred = credentials.Certificate(cred_file)
     firebase_admin.initialize_app(cred, {
-        "projectId": os.environ.get("FIREBASE_PROJECT_ID", "ammiq-pricing")
+        "projectId": os.environ.get("FIREBASE_PROJECT_ID", "ammiq-d63b2")
     })
     return firestore.client()
 
