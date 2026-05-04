@@ -772,8 +772,13 @@ def compute_trends(db, component_id, current_best):
                 old = snap.to_dict().get("best_per_unit")
                 if old and old > 0:
                     trends[key] = round(((current_best - old) / old) * 100, 1)
-        docs = ref.order_by("__name__", direction="DESCENDING").limit(90).stream()
-        hist = [d.to_dict().get("best_per_unit") for d in docs if d.to_dict().get("best_per_unit")]
+        docs = ref.stream()
+        all_hist = sorted(
+            [d.to_dict() for d in docs],
+            key=lambda x: x.get("date", ""),
+            reverse=True,
+        )[:90]
+        hist = [d.get("best_per_unit") for d in all_hist if d.get("best_per_unit")]
         if hist:
             avg = sum(hist) / len(hist)
             trends["avg_90d"] = round(avg, 6)
