@@ -58,8 +58,8 @@ log = logging.getLogger('ammiq')
 # ─────────────────────────────────────────────────────────────────────────────
 # eBay credentials (Production)
 # ─────────────────────────────────────────────────────────────────────────────
-EBAY_APP_ID   = os.environ.get('EBAY_APP_ID',  'CaryCorr-AmmoIQ-PRD-cae8dccdf-eec29a7e')
-EBAY_CERT_ID  = os.environ.get('EBAY_CERT_ID', 'PRD-ae8dccdf3314-c816-4863-a53a-7592')
+EBAY_APP_ID   = os.environ.get('EBAY_APP_ID', '')
+EBAY_CERT_ID  = os.environ.get('EBAY_CERT_ID', '')
 EBAY_TOKEN_URL   = 'https://api.ebay.com/identity/v1/oauth2/token'
 EBAY_BROWSE_URL  = 'https://api.ebay.com/buy/browse/v1/item_summary/search'
 _ebay_token_cache = {'token': None, 'expires': 0}
