@@ -1,1077 +1,1094 @@
 #!/usr/bin/env python3
 """
-AMMO IQ — Daily Price Harvester v2.5
-Playwright + email alerts + dry-run mode.
+AMMO IQ Scraper v2.4
+────────────────────
+Scrapes component prices from multiple vendors and writes best_per_unit
+prices to the Firestore project ammiq-d63b2 under the `prices` collection.
 
-Usage:
-  python scraper.py                       # normal daily run
-  python scraper.py --dry-run             # scrape, do NOT write to Firebase
-  python scraper.py --component cci_sp    # single component
-  python scraper.py --category primers    # single category
-  python scraper.py --no-email            # suppress alert emails
+v2.4 changes:
+  • Grafs:        quantity now parsed from product TITLE — fixes "100ct shown as /500"
+  • Midsouth:     caliber keyword required in title — stops wrong-caliber bleed
+  • Lucky Gunner: each product matched uniquely — no more same price for every brand
+  • eBay:         new module — OAuth Client Credentials + Browse API (brass/metals only)
 
-Changelog:
-  v2.5 — Powder Valley: added keyword relevance filter (same as Midsouth).
-          Added CATEGORY_MIN_PER_UNIT price floor — powders < $15/lb, primers
-          < $0.04/ea, etc. are silently dropped. Fixes $8.99 Bullseye from
-          Midsouth and similar false matches that survive keyword filtering
-          because "Bullseye" appears in unrelated product names.
-  v2.4 — Midsouth: added keyword relevance filter — accessories at $3.99 no
-          longer pollute powder/primer results. Only products whose URL or title
-          contains a keyword from the search term are kept.
-          Grafs: fixed link_pattern from full-domain to relative path
-          (/retail/catalog/product) — price-anchor was finding prices but
-          failing to match relative hrefs.
-  v2.3 — All vendor URLs confirmed via live diagnostic. Grafs new URL, Lucky
-          Gunner Playwright + caliber map, Rotometals BigCommerce URL,
-          Midsouth SearchTerm URL, Powder Valley new domain + Playwright.
-  v2.2 — Fixed Rotometals URL. Added eBay scraper. Metals → [rotometals, ebay].
-  v2.1 — Fixed Midsouth fragment URL. Added 5 new vendor scrapers.
+Usage (local):
+    FIREBASE_CREDENTIALS=path/to/creds.json  \\
+    FIREBASE_PROJECT_ID=ammiq-d63b2          \\
+    python scraper.py
+
+In GitHub Actions:
+    FIREBASE_CREDENTIALS env var holds the JSON content (not path).
+    FIREBASE_PROJECT_ID = ammiq-d63b2
 """
 
-import os, sys, json, re, time, logging, datetime, argparse, smtplib, asyncio
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from dataclasses import dataclass, asdict
-from typing import Optional
+import os
+import re
+import sys
+import json
+import time
+import base64
+import logging
+import datetime
+import requests
+from bs4 import BeautifulSoup, Tag
 
-import yaml, requests
-from bs4 import BeautifulSoup
+# Optional: Playwright for JS-heavy sites (Brownells)
+try:
+    from playwright.sync_api import sync_playwright
+    HAS_PLAYWRIGHT = True
+except ImportError:
+    HAS_PLAYWRIGHT = False
+
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# ── Logging ───────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Logging
+# ─────────────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    format='%(asctime)s  %(levelname)-7s  %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("scraper.log", mode="a"),
+        logging.FileHandler('scraper.log', mode='w', encoding='utf-8'),
     ],
 )
-log = logging.getLogger("ammiq")
+log = logging.getLogger('ammiq')
 
-# ── Config ────────────────────────────────────────────────────────
-SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
-COMPONENTS_F = os.path.join(SCRIPT_DIR, "components.yaml")
-DELAY        = 2.5
-TIMEOUT      = 18
-TODAY        = datetime.date.today().isoformat()
+# ─────────────────────────────────────────────────────────────────────────────
+# eBay credentials (Production)
+# ─────────────────────────────────────────────────────────────────────────────
+EBAY_APP_ID   = os.environ.get('EBAY_APP_ID',  'CaryCorr-AmmoIQ-PRD-cae8dccdf-eec29a7e')
+EBAY_CERT_ID  = os.environ.get('EBAY_CERT_ID', 'PRD-ae8dccdf3314-c816-4863-a53a-7592')
+EBAY_TOKEN_URL   = 'https://api.ebay.com/identity/v1/oauth2/token'
+EBAY_BROWSE_URL  = 'https://api.ebay.com/buy/browse/v1/item_summary/search'
+_ebay_token_cache = {'token': None, 'expires': 0}
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
+# ─────────────────────────────────────────────────────────────────────────────
+# HTTP session — shared, with respectful delays
+# ─────────────────────────────────────────────────────────────────────────────
+SESSION = requests.Session()
+SESSION.headers.update({
+    'User-Agent': (
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/124.0.0.0 Safari/537.36'
     ),
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-}
+    'Accept-Language': 'en-US,en;q=0.9',
+})
+REQUEST_DELAY = 2.5   # seconds between requests to same domain
 
-# Lucky Gunner uses per-caliber category pages, not a search endpoint.
-LG_CALIBER_URLS = {
-    "9mm":    "https://www.luckygunner.com/handgun/9mm-ammo",
-    "45acp":  "https://www.luckygunner.com/handgun/45-acp-ammo",
-    "38spl":  "https://www.luckygunner.com/handgun/38-special-ammo",
-    "357mag": "https://www.luckygunner.com/handgun/357-magnum-ammo",
-    "22lr":   "https://www.luckygunner.com/rimfire/22-lr-ammo",
-}
 
-# Words too generic to use as relevance keywords.
-_STOP_WORDS = {
-    "1lb", "1", "lb", "lbs", "powder", "box", "round", "rounds",
-    "gr", "grain", "grains", "fmj", "ammo", "ammunition", "50",
-    "100", "500", "1000", "pistol", "rifle", "smokeless",
-}
+# ═════════════════════════════════════════════════════════════════════════════
+# UTILITY HELPERS
+# ═════════════════════════════════════════════════════════════════════════════
 
-# Minimum realistic per-unit price by category. Anything below this is a
-# false match (an accessory, a target, a cleaning kit, etc.).
-# per_unit = price / qty, where qty is the unit count (1 lb, 1000 primers, etc.)
-CATEGORY_MIN_PER_UNIT = {
-    "powders":      15.0,   # $/lb  — even economy bulk is ~$18+
-    "primers":       0.04,  # $/ea  — below $40/1000 is impossible
-    "metals":        0.75,  # $/lb  — lead ingots start ~$1.50/lb
-    "brass":         0.05,  # $/case
-    "factory_ammo":  0.10,  # $/round
-    "coatings":      3.0,   # $/lb
-}
-
-# ── Data class ────────────────────────────────────────────────────
-@dataclass
-class PriceOffer:
-    vendor:     str
-    price:      float
-    qty:        float
-    unit:       str
-    per_unit:   float
-    url:        str
-    in_stock:   bool = True
-    scraped_at: str  = TODAY
-
-# ── CLI ───────────────────────────────────────────────────────────
-def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument("--dry-run",   action="store_true")
-    p.add_argument("--component", type=str, default=None)
-    p.add_argument("--category",  type=str, default=None)
-    p.add_argument("--no-email",  action="store_true")
-    p.add_argument("--verbose",   action="store_true")
-    return p.parse_args()
-
-# ── Firebase ──────────────────────────────────────────────────────
-def init_firebase():
-    if firebase_admin._apps:
-        return firestore.client()
-    cred_json = os.environ.get("FIREBASE_CREDENTIALS")
-    if cred_json:
-        cred = credentials.Certificate(json.loads(cred_json))
-    else:
-        cred_file = os.path.join(SCRIPT_DIR, "serviceAccount.json")
-        if not os.path.exists(cred_file):
-            log.error("No Firebase credentials. Set FIREBASE_CREDENTIALS env var or add serviceAccount.json")
-            sys.exit(1)
-        cred = credentials.Certificate(cred_file)
-    firebase_admin.initialize_app(cred, {
-        "projectId": os.environ.get("FIREBASE_PROJECT_ID", "ammiq-d63b2")
-    })
-    return firestore.client()
-
-# ── Helpers ───────────────────────────────────────────────────────
-_PRICE_RE = re.compile(r"\$?([\d,]+\.[\d]{2})")
-
-def parse_price(text: str) -> Optional[float]:
-    """Parse a price string, handling ranges like '$40.95 - $304.95' (takes lower)."""
-    text = text.strip().replace(",", "")
-    parts = text.split(" - ")
-    m = _PRICE_RE.search(parts[0])
-    return float(m.group(1).replace(",", "")) if m else None
-
-def get_qty(component: dict, default: float = 1.0) -> float:
-    """Return the expected package quantity for per-unit price calculation.
-
-    Priority:
-      1. Explicit 'qty' key  — e.g. qty: 25 for a 25 lb metal ingot lot
-      2. Numeric 'unit' key  — e.g. unit: 1000 (primers), unit: 500 (brass)
-      3. default (1.0)       — e.g. unit: "lb" or unit: "oz" for powders/coatings
-
-    This ensures:
-      • Metals   (unit:"lb",  qty:25)  → 25.0  → $37.50 / 25 = $1.50/lb  ✓
-      • Primers  (unit:"1000", no qty) → 1000  → $56.99 / 1000 = $0.057/ea ✓
-      • Brass    (unit:"500",  no qty) → 500   → $3.99 / 500 = $0.008/case ✓
-      • Powders  (unit:"lb",   no qty) → 1.0   → $24.95 / 1 = $24.95/lb  ✓
-    """
-    # 1. Explicit qty field takes priority
-    if "qty" in component:
+def clean_price(text: str) -> float | None:
+    """Extract first dollar amount from a string. Returns None on failure."""
+    if not text:
+        return None
+    m = re.search(r'\$?\s*([\d,]+\.?\d*)', text.replace(',', ''))
+    if m:
         try:
-            v = float(component["qty"])
-            if v > 0:
-                return v
-        except (ValueError, TypeError):
+            return float(m.group(1).replace(',', ''))
+        except ValueError:
             pass
-    # 2. Fall back to unit if it parses as a positive number
-    try:
-        v = float(component.get("unit", ""))
-        if v > 0:
-            return v
-    except (ValueError, TypeError):
-        pass
-    # 3. Default
-    return default
-
-
-def parse_weight_lbs(text: str) -> float:
-    """Extract a weight in lbs from a product title.
-    '25 Lb Pure Lead' → 25.0, '5-lb ingot' → 5.0, '1 pound' → 1.0
-    Returns 0.0 if nothing found."""
-    text = text.lower()
-    m = re.search(r'([\d]+(?:\.\d+)?)\s*(?:lb|lbs|pound|pounds)', text)
-    return float(m.group(1)) if m else 0.0
-
-def first_el(card, selectors: list):
-    for sel in selectors:
-        el = card.select_one(sel)
-        if el:
-            return el
     return None
 
-def keywords_for(term: str) -> set:
-    """Return meaningful keywords from a search term, dropping stop words."""
-    return {w.lower() for w in term.split() if w.lower() not in _STOP_WORDS}
 
-def is_relevant(text: str, keywords: set) -> bool:
-    """Return True if text contains at least one of the keywords."""
-    if not keywords:
-        return True
-    text = text.lower()
-    return any(kw in text for kw in keywords)
-
-def fetch_static(url: str) -> Optional[BeautifulSoup]:
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-        resp.raise_for_status()
-        time.sleep(DELAY)
-        return BeautifulSoup(resp.text, "html.parser")
-    except Exception as e:
-        log.warning(f"  Static fetch failed: {e}")
-        return None
-
-async def _fetch_js(url: str, wait_selector: str = None, wait_ms: int = 4000):
-    try:
-        from playwright.async_api import async_playwright
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            ctx  = await browser.new_context(user_agent=HEADERS["User-Agent"], locale="en-US")
-            page = await ctx.new_page()
-            await page.goto(url, timeout=30000)
-            if wait_selector:
-                try:
-                    await page.wait_for_selector(wait_selector, timeout=10000)
-                except Exception:
-                    pass
-            await page.wait_for_timeout(wait_ms)
-            html = await page.content()
-            await browser.close()
-            await asyncio.sleep(DELAY)
-            return BeautifulSoup(html, "html.parser")
-    except ImportError:
-        log.warning("  Playwright not installed — falling back to static fetch")
-        return fetch_static(url)
-    except Exception as e:
-        log.warning(f"  Playwright fetch failed: {e}")
-        return None
-
-def fetch_js(url: str, wait_selector: str = None, wait_ms: int = 4000) -> Optional[BeautifulSoup]:
-    return asyncio.run(_fetch_js(url, wait_selector, wait_ms))
-
-def price_anchor_offers(soup, vendor_name, component, link_domain,
-                        price_selector=None, link_pattern=None, max_results=5):
+def extract_qty_from_title(title: str) -> int | None:
     """
-    Find products by locating price elements and walking up the DOM to find
-    the nearest ancestor containing a product link. Used for sites with
-    non-standard product card markup (Grafs, Lucky Gunner).
-    """
-    offers = []
-    seen   = set()
+    Extract the pack/count quantity from a product title string.
 
-    if price_selector:
-        price_els = soup.select(price_selector)
+    Handles patterns like:
+      "Hornady Brass 38 Special Unprimed Bulk Bag of 100"  → 100
+      "500 Count Boxer Primed"                              → 500
+      "1000/Box"                                            → 1000
+      "CCI #500 Small Pistol Primers 1000/Box"              → 1000
+      "Federal GM100 Primers (1,000 ct)"                    → 1000
+      "9mm Brass 250pk"                                     → 250
+    """
+    t = title.lower()
+    patterns = [
+        # "bulk bag of N" / "bag of N" / "box of N" / "pack of N"
+        r'(?:bulk\s+)?(?:bag|box|pack|pouch|jug|bottle|canister)\s+of\s+([\d,]+)',
+        # "N count" / "N ct" / "N-count"
+        r'([\d,]+)\s*[-–]?\s*(?:count|ct)\b',
+        # "N/box" / "N/1000" etc.
+        r'([\d,]+)\s*/\s*(?:box|bag|pack|case)',
+        # "Npk" / "N pk" (pack abbreviation)
+        r'([\d,]+)\s*pk\b',
+        # "(N)" standalone in parens
+        r'\(([\d,]+)\)',
+        # "N rounds" / "N pieces" / "N primers"
+        r'([\d,]+)\s*(?:rounds?|pieces?|pcs?|primers?|cases?|casings?)\b',
+        # "per N" / "per 1000"
+        r'per\s+([\d,]+)',
+        # "N-pack"
+        r'([\d,]+)\s*-\s*pack',
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, t)
+        if m:
+            raw = m.group(1).replace(',', '')
+            val = int(raw)
+            # Sanity: reject unrealistic quantities (0, single digits for components, huge)
+            if 10 <= val <= 100_000:
+                return val
+    return None
+
+
+def fetch_html(url: str, retries: int = 2, delay: float = REQUEST_DELAY) -> BeautifulSoup | None:
+    """GET a URL and return parsed BeautifulSoup, or None on failure."""
+    for attempt in range(retries + 1):
+        try:
+            time.sleep(delay if attempt > 0 else 0)
+            r = SESSION.get(url, timeout=20)
+            r.raise_for_status()
+            return BeautifulSoup(r.text, 'html.parser')
+        except Exception as e:
+            log.warning(f'  fetch attempt {attempt+1} failed for {url}: {e}')
+            time.sleep(delay)
+    return None
+
+
+def title_contains_caliber(title: str, caliber_keywords: list[str]) -> bool:
+    """Return True if at least one caliber keyword appears in the title."""
+    t = title.lower()
+    return any(kw.lower() in t for kw in caliber_keywords)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# FIREBASE SETUP
+# ═════════════════════════════════════════════════════════════════════════════
+
+def init_firebase() -> firestore.Client:
+    raw = os.environ.get('FIREBASE_CREDENTIALS', '')
+    if not raw:
+        log.error('FIREBASE_CREDENTIALS env var not set.')
+        sys.exit(1)
+
+    # GitHub Actions passes the JSON content directly; local dev may pass a path
+    if raw.strip().startswith('{'):
+        cred_dict = json.loads(raw)
+        cred = credentials.Certificate(cred_dict)
     else:
-        price_els = [
-            el.parent for el in soup.find_all(
-                string=re.compile(r"^\$[\d,]+\.[\d]{2}$")
-            )
-        ]
+        cred = credentials.Certificate(raw)
 
-    for price_el in price_els:
-        price = parse_price(price_el.get_text())
-        if not price:
-            continue
-
-        container = price_el
-        link_el   = None
-        for _ in range(10):
-            container = container.parent
-            if not container or container.name in ("html", "body", "[document]"):
-                break
-            pattern   = link_pattern or r"."
-            candidates = container.find_all("a", href=re.compile(pattern))
-            if candidates:
-                link_el = candidates[0]
-                break
-
-        if not link_el:
-            continue
-
-        href = link_el["href"]
-        if not href.startswith("http"):
-            href = link_domain.rstrip("/") + "/" + href.lstrip("/")
-        if href in seen:
-            continue
-        seen.add(href)
-
-        qty = get_qty(component)
-        offers.append(PriceOffer(
-            vendor_name, price, qty,
-            str(component.get("unit", "1")),
-            round(price / qty, 6) if qty else price,
-            href,
-        ))
-        if len(offers) >= max_results:
-            break
-
-    return offers
+    project = os.environ.get('FIREBASE_PROJECT_ID', 'ammiq-d63b2')
+    firebase_admin.initialize_app(cred, {'projectId': project})
+    return firestore.client()
 
 
-# ── Vendor scrapers ───────────────────────────────────────────────
-
-def scrape_powder_valley(component):
-    """
-    Powder Valley — powdervalley.com (domain changed from powdervalleyinc.com).
-    JS-rendered via Algolia search widget. Card: li.ais-Hits-item.product.
-    Price may be a range ("$40.95 - $304.95") — parse_price() takes the lower.
-    FIX v2.5: Added keyword relevance filter — same as Midsouth fix. Algolia
-    returns 10 results including accessories; only keep cards whose link href
-    or title text contains a keyword from the search term.
-    """
-    offers = []
-    for term in component.get("search_terms", [])[:2]:
-        url  = f"https://www.powdervalley.com/search/?q={requests.utils.quote(term)}"
-        log.info(f"  Powder Valley (Playwright): {url[:70]}")
-        soup = fetch_js(url, wait_selector="li.ais-Hits-item, li.product", wait_ms=4000)
-        if not soup:
-            continue
-        kws   = keywords_for(term)
-        cards = soup.select("li.ais-Hits-item.product, li.ais-Hits-item, li.product")
-        for card in cards[:10]:
-            price_el = first_el(card, [".price", ".amount", "span.price"])
-            link_el  = card.select_one("a[href*='/product/'], a.prod-img-w, a[href]")
-            if not price_el or not link_el:
-                continue
-            href       = link_el["href"]
-            title_attr = link_el.get("title", "") or link_el.get_text(strip=True)
-            check_text = (href + " " + title_attr).lower()
-            if not is_relevant(check_text, kws):
-                continue
-            price = parse_price(price_el.get_text())
-            if not price:
-                continue
-            qty  = get_qty(component)
-            if href.startswith("/"):
-                href = "https://www.powdervalley.com" + href
-            offers.append(PriceOffer(
-                "Powder Valley", price, qty,
-                str(component.get("unit", "1")),
-                round(price / qty, 6) if qty else price, href,
-            ))
-    return offers
+def write_component(db, component_id: str, data: dict) -> None:
+    """Upsert a component document in the `prices` collection."""
+    ref = db.collection('prices').document(component_id)
+    data['updated_at'] = datetime.datetime.utcnow().isoformat() + 'Z'
+    ref.set(data, merge=True)
+    log.info(f'  ✓ Firestore: {component_id} = ${data.get("best_per_unit", "?"):.4f}/unit')
 
 
-def scrape_grafs(component):
-    """
-    Graf & Sons — /retail/catalog/search?keywords=<term>
-    Uses price-anchor strategy. FIX v2.4: link_pattern now matches relative
-    hrefs (/retail/catalog/product/...) instead of requiring the full domain,
-    which was why price-anchor was finding prices but returning no offers.
-    """
-    offers = []
-    for term in component.get("search_terms", [])[:2]:
-        url  = f"https://www.grafs.com/retail/catalog/search?keywords={requests.utils.quote(term)}"
-        soup = fetch_static(url)
-        if not soup:
-            continue
-        found = price_anchor_offers(
-            soup, "Grafs", component,
-            link_domain="https://www.grafs.com",
-            link_pattern=r"/retail/catalog/product",   # relative path — fixed in v2.4
-        )
-        offers.extend(found)
-    return offers
+# ═════════════════════════════════════════════════════════════════════════════
+# COMPONENT DEFINITIONS
+# ═════════════════════════════════════════════════════════════════════════════
 
+# Each component defines:
+#   category       : firestore category tag
+#   grafs_query    : search string for grafs.com
+#   caliber_kws    : keywords that MUST appear in a matching title (anti-bleed)
+#   typical_unit   : what "per_unit" means (e.g. 'case', 'primer', 'lb')
+#   midsouth_query : search string for midsouth (None = skip)
+#   lg_query       : search string for lucky gunner (None = skip)
+#   pv_query       : search string for powder valley (None = skip)
+#   ebay_query     : search string for eBay Browse API (None = skip)
 
-def scrape_midsouth(component):
-    """
-    Midsouth Shooters Supply — /search?SearchTerm=<term>, Playwright.
-    FIX v2.4: Added keyword relevance filter. Midsouth search returns ~12
-    results including unrelated accessories at $3.99. Only products whose
-    URL or title contains a keyword from the search term are kept.
-    Confirmed working: Titegroup 1lb=$41.99, 5lb=$159.99, 8lb=$313.99.
-    """
-    offers = []
-    for term in component.get("search_terms", [])[:2]:
-        url  = f"https://www.midsouthshooterssupply.com/search?SearchTerm={requests.utils.quote(term)}"
-        log.info(f"  Midsouth (Playwright): {url[:70]}")
-        soup = fetch_js(url, wait_selector=".product-wrapper, .product", wait_ms=5000)
-        if not soup:
-            continue
-
-        # Keywords for relevance filtering (e.g. "hodgdon titegroup 1lb" → {"hodgdon","titegroup"})
-        kws = keywords_for(term)
-
-        cards = soup.select(".product")
-        for card in cards[:8]:
-            link_el = card.select_one("a[href*='/item/'], a[href]")
-            if not link_el:
-                continue
-
-            # Relevance check: product URL or title must contain a keyword
-            href  = link_el["href"]
-            title_attr = link_el.get("title", "")
-            check_text = (href + " " + title_attr).lower()
-            if not is_relevant(check_text, kws):
-                continue
-
-            # Find price: first <span> whose full text is a price
-            price_el = None
-            for span in card.find_all("span"):
-                t = span.get_text(strip=True)
-                if t.startswith("$") and _PRICE_RE.match(t):
-                    price_el = span
-                    break
-
-            if not price_el:
-                continue
-            price = parse_price(price_el.get_text())
-            if not price:
-                continue
-
-            qty = get_qty(component)
-            if href.startswith("/"):
-                href = "https://www.midsouthshooterssupply.com" + href
-            offers.append(PriceOffer(
-                "Midsouth", price, qty,
-                str(component.get("unit", "1")),
-                round(price / qty, 6) if qty else price, href,
-            ))
-    return offers
-
-
-def scrape_lucky_gunner(component):
-    """
-    Lucky Gunner — JS-rendered, Playwright. Caliber category pages only.
-    No search endpoint exists. Only works for components with a 'caliber' field.
-    Price elements: span.price and span.regular-price (confirmed via diagnostic).
-    """
-    caliber = component.get("caliber", "")
-    if not caliber:
-        log.warning("  Lucky Gunner skipped — no 'caliber' field (LG only carries factory ammo)")
-        return []
-
-    url = LG_CALIBER_URLS.get(caliber)
-    if not url:
-        log.warning(f"  Lucky Gunner: no URL mapped for caliber '{caliber}'")
-        return []
-
-    log.info(f"  Lucky Gunner (Playwright): {url}")
-    soup = fetch_js(url, wait_selector="span.price, span.regular-price", wait_ms=5000)
-    if not soup:
-        return []
-
-    brand = component.get("brand", "").lower()
-    kws   = set()
-    for term in component.get("search_terms", []):
-        kws |= keywords_for(term)
-    if brand:
-        kws.add(brand.lower())
-
-    offers = price_anchor_offers(
-        soup, "Lucky Gunner", component,
-        link_domain="https://www.luckygunner.com",
-        price_selector="span.price, span.regular-price",
-        link_pattern=r"luckygunner\.com/",
-        max_results=8,
-    )
-
-    # Filter to products matching the tracked brand
-    if brand and offers:
-        filtered = [o for o in offers if is_relevant(o.url, {brand})]
-        if filtered:
-            return filtered
-
-    return offers[:3]
-
-
-def scrape_ammoseek(component):
-    """AmmoSeek — JS-rendered aggregator, Playwright."""
-    caliber = component.get("caliber", "")
-    if not caliber:
-        return []
-    cal_map = {
-        "9mm": "9mm-luger", "45acp": "45-auto", "38spl": "38-special",
-        "357mag": "357-magnum", "22lr": "22-long-rifle",
-    }
-    slug  = cal_map.get(caliber, caliber.replace(" ", "-"))
-    grain = component.get("grain", "")
-    url   = f"https://ammoseek.com/ammo/{slug}" + (f"?gr={grain}" if grain else "")
-    log.info(f"  AmmoSeek (Playwright): {url}")
-    soup  = fetch_js(url, wait_selector="tr.offer-row, .listing-item", wait_ms=5000)
-    if not soup:
-        return []
-    offers = []
-    for row in soup.select("tr.offer-row, .listing-item, .ammo-row")[:10]:
-        price_el  = first_el(row, [".price-per-round", ".cpr", "td.cpr", "[data-cpr]"])
-        vendor_el = first_el(row, [".retailer", ".vendor-name", "td.vendor", ".seller"])
-        link_el   = row.select_one("a[href]")
-        stock_el  = row.select_one(".stock, .availability")
-        if not price_el:
-            continue
-        cpr      = parse_price(price_el.get_text())
-        if not cpr:
-            continue
-        box_qty  = get_qty(component, 50.0)
-        in_stock = "out" not in (stock_el.get_text().lower() if stock_el else "in")
-        offers.append(PriceOffer(
-            vendor_el.get_text().strip() if vendor_el else "AmmoSeek",
-            round(cpr * box_qty, 4), box_qty,
-            str(component.get("unit", "50")),
-            cpr, link_el["href"] if link_el else url, in_stock,
-        ))
-    return offers
-
-
-def scrape_target_sports(component):
-    """Target Sports USA — JS-rendered, Playwright."""
-    offers = []
-    for term in component.get("search_terms", [])[:1]:
-        url  = f"https://www.targetsportsusa.com/search.aspx?q={requests.utils.quote(term)}"
-        log.info(f"  Target Sports (Playwright): {url[:65]}")
-        soup = fetch_js(url, wait_selector=".product-item, .product-detail", wait_ms=4000)
-        if not soup:
-            continue
-        cards = soup.select(".ts-product-card, .product-item, .product-detail")
-        for card in cards[:5]:
-            price_el = first_el(card, [".our-price", ".sale-price", "[itemprop='price']", ".price"])
-            link_el  = card.select_one("a[href]")
-            if not price_el:
-                continue
-            raw   = price_el.get("content") or price_el.get_text()
-            price = parse_price(str(raw))
-            if not price:
-                continue
-            qty = get_qty(component, 50.0)
-            offers.append(PriceOffer(
-                "Target Sports USA", price, qty,
-                str(component.get("unit", "50")),
-                round(price / qty, 6) if qty else price,
-                link_el["href"] if link_el else url,
-            ))
-    return offers
-
-
-def scrape_brownells(component):
-    """Brownells — React SPA, Playwright."""
-    offers = []
-    for term in component.get("search_terms", [])[:1]:
-        url  = f"https://www.brownells.com/search/index.htm?k={requests.utils.quote(term)}"
-        log.info(f"  Brownells (Playwright): {url[:65]}")
-        soup = fetch_js(url, wait_selector=".js-product-card, .product-item", wait_ms=5000)
-        if not soup:
-            continue
-        cards = soup.select(".js-product-card, .product-item, [data-product]")
-        for card in cards[:5]:
-            price_el = first_el(card, [".js-price", "[itemprop='price']", ".price"])
-            link_el  = card.select_one("a[href]")
-            if not price_el:
-                continue
-            raw   = price_el.get("content") or price_el.get_text()
-            price = parse_price(str(raw))
-            if not price:
-                continue
-            qty  = get_qty(component)
-            href = link_el["href"] if link_el else url
-            if href.startswith("/"):
-                href = "https://www.brownells.com" + href
-            offers.append(PriceOffer(
-                "Brownells", price, qty,
-                str(component.get("unit", "1")),
-                round(price / qty, 6) if qty else price, href,
-            ))
-    return offers
-
-
-def scrape_rotometals(component):
-    """
-    Rotometals — BigCommerce. Confirmed URL, card, and price selectors.
-    URL:   /search.php?search_query=<term>&section=product
-    Card:  li.product > article.card
-    Price: span.price--withoutTax.price--main
-    """
-    offers = []
-    for term in component.get("search_terms", [])[:2]:
-        url  = f"https://www.rotometals.com/search.php?search_query={requests.utils.quote(term)}&section=product"
-        soup = fetch_static(url)
-        if not soup:
-            continue
-        for card in soup.select("li.product")[:5]:
-            price_el = first_el(card, [
-                ".price--withoutTax.price--main",
-                ".price.price--main",
-                ".price--withoutTax",
-                ".price",
-            ])
-            link_el = card.select_one("article.card a[href], a[href]")
-            if not price_el or not link_el:
-                continue
-            price = parse_price(price_el.get_text())
-            if not price:
-                continue
-            # Try to get weight from product title — more reliable than qty
-            # field alone (e.g. "Pure Lead Ingot 25 Lbs" → 25.0)
-            title_el = card.select_one(".card-title, .card-body .card-title, h4, h3, a[aria-label]")
-            title_text = title_el.get_text() if title_el else ""
-            title_lbs = parse_weight_lbs(title_text)
-            qty = title_lbs if title_lbs >= 1.0 else get_qty(component)
-            href = link_el["href"]
-            if href.startswith("/"):
-                href = "https://www.rotometals.com" + href
-            offers.append(PriceOffer(
-                "Rotometals", price, qty,
-                str(component.get("unit", "lb")),
-                round(price / qty, 6) if qty else price, href,
-            ))
-    return offers
-
-
-def scrape_ebay(component):
-    """
-    eBay — Buy It Now, sorted by price+shipping lowest first.
-    LH_BIN=1, _sop=15, LH_ItemCondition=3 (New only).
-    """
-    offers = []
-    for term in component.get("search_terms", [])[:2]:
-        url = (
-            f"https://www.ebay.com/sch/i.html"
-            f"?_nkw={requests.utils.quote(term)}"
-            f"&LH_BIN=1&_sop=15&LH_ItemCondition=3"
-        )
-        soup = fetch_static(url)
-        if not soup:
-            continue
-        for card in soup.select(".s-item")[:8]:
-            title_el = card.select_one(".s-item__title")
-            price_el = first_el(card, [".s-item__price", ".notranslate"])
-            ship_el  = card.select_one(".s-item__shipping, .s-item__freeXDays")
-            link_el  = card.select_one("a.s-item__link, a[href*='ebay.com/itm']")
-            if title_el and "shop on ebay" in title_el.get_text().lower():
-                continue
-            if not price_el:
-                continue
-            price = parse_price(price_el.get_text().split(" to ")[0])
-            if not price:
-                continue
-            if ship_el and "free" not in ship_el.get_text().lower():
-                ship_cost = parse_price(ship_el.get_text())
-                if ship_cost:
-                    price += ship_cost
-            qty = get_qty(component)
-            offers.append(PriceOffer(
-                "eBay", price, qty,
-                str(component.get("unit", "lb")),
-                round(price / qty, 6) if qty else price,
-                link_el["href"] if link_el else url,
-            ))
-    return offers
-
-
-def scrape_starline(component):
-    """Starline Brass — unprimed brass cases, static HTML."""
-    offers = []
-    for term in component.get("search_terms", [])[:2]:
-        url  = f"https://www.starlinebrass.com/search/?q={requests.utils.quote(term)}"
-        soup = fetch_static(url)
-        if not soup:
-            continue
-        for card in soup.select(".product-card, .product-item, .product, li.product")[:5]:
-            price_el = first_el(card, [
-                ".product-price", ".woocommerce-Price-amount", ".price bdi", ".price",
-            ])
-            link_el  = card.select_one("a[href*='/brass/'], a[href*='/products/'], a[href]")
-            stock_el = card.select_one(".stock, .in-stock, .out-of-stock, .availability")
-            if not price_el:
-                continue
-            price    = parse_price(price_el.get_text())
-            if not price:
-                continue
-            in_stock = "out" not in (stock_el.get_text().lower() if stock_el else "in")
-            qty      = get_qty(component, 500.0)
-            href     = link_el["href"] if link_el else url
-            if href.startswith("/"):
-                href = "https://www.starlinebrass.com" + href
-            offers.append(PriceOffer(
-                "Starline", price, qty,
-                str(component.get("unit", "500")),
-                round(price / qty, 6) if qty else price, href, in_stock,
-            ))
-    return offers
-
-
-def scrape_magnus_bullets(component):
-    """Magnus Bullets — WooCommerce, Hi-Tek coated cast bullets."""
-    offers = []
-    for term in component.get("search_terms", [])[:2]:
-        url  = f"https://www.magnusbullets.com/?s={requests.utils.quote(term)}&post_type=product"
-        soup = fetch_static(url)
-        if not soup:
-            continue
-        for card in soup.select("li.product, .product, .product-small")[:5]:
-            price_el = first_el(card, [
-                ".woocommerce-Price-amount bdi", ".woocommerce-Price-amount",
-                ".price ins .amount", ".price",
-            ])
-            link_el = card.select_one("a[href]")
-            if not price_el:
-                continue
-            price = parse_price(price_el.get_text())
-            if not price:
-                continue
-            qty = get_qty(component)
-            offers.append(PriceOffer(
-                "Magnus Bullets", price, qty,
-                str(component.get("unit", "lb")),
-                round(price / qty, 6) if qty else price,
-                link_el["href"] if link_el else url,
-            ))
-    return offers
-
-
-def scrape_bayou_bullets(component):
-    """Bayou Bullets — WooCommerce, Hi-Tek coated cast bullets."""
-    offers = []
-    for term in component.get("search_terms", [])[:2]:
-        url  = f"https://bayoubullets.com/?s={requests.utils.quote(term)}&post_type=product"
-        soup = fetch_static(url)
-        if not soup:
-            continue
-        for card in soup.select("li.product, .product, .product-small")[:5]:
-            price_el = first_el(card, [
-                ".woocommerce-Price-amount bdi", ".woocommerce-Price-amount",
-                ".price ins .amount", ".price",
-            ])
-            link_el = card.select_one("a[href]")
-            if not price_el:
-                continue
-            price = parse_price(price_el.get_text())
-            if not price:
-                continue
-            qty = get_qty(component)
-            offers.append(PriceOffer(
-                "Bayou Bullets", price, qty,
-                str(component.get("unit", "lb")),
-                round(price / qty, 6) if qty else price,
-                link_el["href"] if link_el else url,
-            ))
-    return offers
-
-
-def scrape_harbor_freight(component):
-    """Harbor Freight — powder coat. May be blocked by Cloudflare."""
-    offers = []
-    for term in component.get("search_terms", [])[:1]:
-        url  = f"https://www.harborfreight.com/catalogsearch/result/?q={requests.utils.quote(term)}"
-        soup = fetch_static(url)
-        if not soup:
-            continue
-        title_tag = soup.find("title")
-        if title_tag and "just a moment" in title_tag.get_text().lower():
-            log.warning("  Harbor Freight: Cloudflare challenge — scraper blocked.")
-            return []
-        for card in soup.select("[data-qa='product-card'], .grid-item, .product-card")[:5]:
-            price_el = first_el(card, [".price-current", "[data-qa='price']", ".price"])
-            link_el  = card.select_one("a[href]")
-            if not price_el:
-                continue
-            price = parse_price(price_el.get_text())
-            if not price:
-                continue
-            qty  = get_qty(component)
-            href = link_el["href"] if link_el else url
-            if href.startswith("/"):
-                href = "https://www.harborfreight.com" + href
-            offers.append(PriceOffer(
-                "Harbor Freight", price, qty,
-                str(component.get("unit", "lb")),
-                round(price / qty, 6) if qty else price, href,
-            ))
-    return offers
-
-
-def scrape_amazon(component):
-    """Amazon — blocked by bot detection. Remove from components.yaml vendors."""
-    log.warning("  Amazon scraping is blocked. Remove 'amazon' from vendors in components.yaml.")
-    return []
-
-
-# ── Vendor registry ───────────────────────────────────────────────
-VENDOR_SCRAPERS = {
-    "powder_valley":  scrape_powder_valley,
-    "grafs":          scrape_grafs,
-    "midsouth":       scrape_midsouth,
-    "lucky_gunner":   scrape_lucky_gunner,
-    "ammoseek":       scrape_ammoseek,
-    "target_sports":  scrape_target_sports,
-    "brownells":      scrape_brownells,
-    "rotometals":     scrape_rotometals,
-    "ebay":           scrape_ebay,
-    "starline":       scrape_starline,
-    "magnus_bullets": scrape_magnus_bullets,
-    "bayou_bullets":  scrape_bayou_bullets,
-    "harbor_freight": scrape_harbor_freight,
-    "amazon":         scrape_amazon,
+BRASS_COMPONENTS = {
+    '9mm_brass': {
+        'category': 'brass',
+        'caliber_kws': ['9mm', '9 mm', 'luger', 'parabellum', '9x19'],
+        'grafs_query': '9mm brass unprimed',
+        'midsouth_query': '9mm brass unprimed',
+        'lg_query': '9mm brass',
+        'ebay_query': '9mm brass cases unprimed once fired',
+        'typical_unit': 'case',
+    },
+    '38_special_brass': {
+        'category': 'brass',
+        'caliber_kws': ['38 special', '38spl', '.38 spl', '38 spl'],
+        'grafs_query': '38 special brass unprimed',
+        'midsouth_query': '38 special brass',
+        'lg_query': None,
+        'ebay_query': '38 special brass cases unprimed',
+        'typical_unit': 'case',
+    },
+    '357_mag_brass': {
+        'category': 'brass',
+        'caliber_kws': ['357 mag', '.357 mag', '357mag'],
+        'grafs_query': '357 magnum brass unprimed',
+        'midsouth_query': '357 magnum brass',
+        'lg_query': None,
+        'ebay_query': '357 magnum brass cases unprimed',
+        'typical_unit': 'case',
+    },
+    '45_acp_brass': {
+        'category': 'brass',
+        'caliber_kws': ['45 acp', '.45 acp', '45acp', '45 auto'],
+        'grafs_query': '45 acp brass unprimed',
+        'midsouth_query': '45 acp brass',
+        'lg_query': None,
+        'ebay_query': '45 ACP brass cases unprimed',
+        'typical_unit': 'case',
+    },
+    '40_sw_brass': {
+        'category': 'brass',
+        'caliber_kws': ['40 s&w', '40sw', '.40 s&w', '40 smith'],
+        'grafs_query': '40 sw brass unprimed',
+        'midsouth_query': '40 s&w brass',
+        'lg_query': None,
+        'ebay_query': '40 S&W brass cases unprimed',
+        'typical_unit': 'case',
+    },
+    '380_acp_brass': {
+        'category': 'brass',
+        'caliber_kws': ['380 acp', '.380 acp', '380acp', '380 auto', '9mm kurz'],
+        'grafs_query': '380 acp brass unprimed',
+        'midsouth_query': '380 acp brass',
+        'lg_query': None,
+        'ebay_query': '380 ACP brass cases unprimed',
+        'typical_unit': 'case',
+    },
 }
 
-# ── Trends ────────────────────────────────────────────────────────
-def compute_trends(db, component_id, current_best):
-    trends = {"trend_7d": None, "trend_30d": None, "alert": "hold", "avg_90d": None}
-    if not db:
-        return trends
-    try:
-        ref = db.collection("prices").document(component_id).collection("history")
-        for days, key in [(7, "trend_7d"), (30, "trend_30d")]:
-            past = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
-            snap = ref.document(past).get()
-            if snap.exists:
-                old = snap.to_dict().get("best_per_unit")
-                if old and old > 0:
-                    trends[key] = round(((current_best - old) / old) * 100, 1)
-        docs = ref.stream()
-        all_hist = sorted(
-            [d.to_dict() for d in docs],
-            key=lambda x: x.get("date", ""),
-            reverse=True,
-        )[:90]
-        hist = [d.get("best_per_unit") for d in all_hist if d.get("best_per_unit")]
-        if hist:
-            avg = sum(hist) / len(hist)
-            trends["avg_90d"] = round(avg, 6)
-            if len(hist) >= 14:
-                pct = ((current_best - avg) / avg) * 100
-                if pct <= -5:
-                    trends["alert"] = "buy"
-                elif trends.get("trend_30d") and trends["trend_30d"] >= 10:
-                    trends["alert"] = "stock_up"
-    except Exception as e:
-        log.warning(f"  Trend error for {component_id}: {e}")
-    return trends
+PRIMER_COMPONENTS = {
+    'cci_spp': {
+        'category': 'primers',
+        'caliber_kws': ['cci', 'small pistol', 'spp', '#500', 'no. 500'],
+        'grafs_query': 'CCI 500 small pistol primers 1000',
+        'midsouth_query': 'CCI small pistol primers',
+        'lg_query': None,
+        'ebay_query': None,   # primers prohibited on eBay
+        'typical_unit': 'primer',
+    },
+    'cci_lpp': {
+        'category': 'primers',
+        'caliber_kws': ['cci', 'large pistol', 'lpp', '#300', 'no. 300'],
+        'grafs_query': 'CCI 300 large pistol primers 1000',
+        'midsouth_query': 'CCI large pistol primers',
+        'lg_query': None,
+        'ebay_query': None,
+        'typical_unit': 'primer',
+    },
+    'federal_spp': {
+        'category': 'primers',
+        'caliber_kws': ['federal', 'small pistol', 'gm100', 'no. 100', '#100', 'gm 100'],
+        'grafs_query': 'Federal small pistol primers 1000',
+        'midsouth_query': 'Federal small pistol primers',
+        'lg_query': None,
+        'ebay_query': None,
+        'typical_unit': 'primer',
+    },
+    'federal_lpp': {
+        'category': 'primers',
+        'caliber_kws': ['federal', 'large pistol', 'gm150', 'no. 150', '#150', 'gm 150'],
+        'grafs_query': 'Federal large pistol primers 1000',
+        'midsouth_query': 'Federal large pistol primers',
+        'lg_query': None,
+        'ebay_query': None,
+        'typical_unit': 'primer',
+    },
+}
 
-# ── Firebase write ────────────────────────────────────────────────
-def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=False):
-    if not offers:
-        log.warning(f"  No offers — skipping {comp_name}")
-        return None
-    in_stock = [o for o in offers if o.in_stock] or offers
+POWDER_COMPONENTS = {
+    'accurate_no2': {
+        'category': 'powders',
+        'caliber_kws': ['accurate', 'no. 2', 'no 2', '#2', 'accurate 2'],
+        'grafs_query': 'Accurate No 2 powder 1lb',
+        'midsouth_query': 'Accurate No 2 powder',
+        'lg_query': None,
+        'ebay_query': None,   # powder prohibited on eBay
+        'typical_unit': 'lb',
+    },
+    'n320': {
+        'category': 'powders',
+        'caliber_kws': ['n320', 'vihtavuori n320', 'n 320'],
+        'grafs_query': 'Vihtavuori N320 powder 1lb',
+        'midsouth_query': 'Vihtavuori N320',
+        'lg_query': None,
+        'ebay_query': None,
+        'typical_unit': 'lb',
+    },
+    'bullseye': {
+        'category': 'powders',
+        'caliber_kws': ['bullseye', 'alliant bullseye'],
+        'grafs_query': 'Alliant Bullseye powder 1lb',
+        'midsouth_query': 'Alliant Bullseye powder',
+        'lg_query': None,
+        'ebay_query': None,
+        'typical_unit': 'lb',
+    },
+    'unique': {
+        'category': 'powders',
+        'caliber_kws': ['unique', 'alliant unique'],
+        'grafs_query': 'Alliant Unique powder 1lb',
+        'midsouth_query': 'Alliant Unique powder',
+        'lg_query': None,
+        'ebay_query': None,
+        'typical_unit': 'lb',
+    },
+    'w231': {
+        'category': 'powders',
+        'caliber_kws': ['w231', 'hp-38', 'winchester 231'],
+        'grafs_query': 'Winchester W231 powder 1lb',
+        'midsouth_query': 'Winchester 231 powder',
+        'lg_query': None,
+        'ebay_query': None,
+        'typical_unit': 'lb',
+    },
+    'titegroup': {
+        'category': 'powders',
+        'caliber_kws': ['titegroup', 'hodgdon titegroup'],
+        'grafs_query': 'Hodgdon Titegroup powder 1lb',
+        'midsouth_query': 'Titegroup powder',
+        'lg_query': None,
+        'ebay_query': None,
+        'typical_unit': 'lb',
+    },
+    'true_blue': {
+        'category': 'powders',
+        'caliber_kws': ['true blue', 'ramshot true blue'],
+        'grafs_query': 'Ramshot True Blue powder 1lb',
+        'midsouth_query': 'True Blue powder',
+        'lg_query': None,
+        'ebay_query': None,
+        'typical_unit': 'lb',
+    },
+}
 
-    # Price ceiling — drop unrealistically expensive results before picking best
-    _CEIL = {
-        "metals":       12.0,   # raw lead $1.50-4, Lyman #2 ~$6, Linotype ~$10
-        "powders":      80.0,   # Vihtavuori tops out ~$70/lb
-        "primers":       0.25,  # match-grade primers ~$0.12-0.18/ea
-        "brass":        10.0,   # per case
-        "factory_ammo":  3.0,   # per round
-        "coatings":     50.0,   # per lb
-    }
-    _ceil = _CEIL.get(category, 0)
-    if _ceil > 0:
-        _ceiled = [o for o in in_stock if o.per_unit <= _ceil]
-        if _ceiled:
-            _dropped = len(in_stock) - len(_ceiled)
-            if _dropped:
-                log.debug(f"  Price ceiling ${_ceil}/unit dropped {_dropped} offer(s)")
-            in_stock = _ceiled
-        else:
-            log.warning(f"  Price ceiling ${_ceil}/unit would drop ALL offers — keeping originals")
+METAL_COMPONENTS = {
+    'raw_lead': {
+        'category': 'metals',
+        'caliber_kws': ['raw lead', 'soft lead', 'lead ingot', 'lead alloy'],
+        'grafs_query': None,
+        'midsouth_query': None,
+        'lg_query': None,
+        'ebay_query': 'raw lead ingots casting bullets',
+        'rotometals_sku': 'pure-lead-ingots',
+        'typical_unit': 'lb',
+    },
+    'lyman_2': {
+        'category': 'metals',
+        'caliber_kws': ['lyman 2', 'lyman #2', 'lyman no 2', 'no. 2 alloy'],
+        'grafs_query': None,
+        'midsouth_query': None,
+        'lg_query': None,
+        'ebay_query': 'lyman 2 alloy bullet casting lead',
+        'rotometals_sku': 'lyman-2-bullet-alloy',
+        'typical_unit': 'lb',
+    },
+    'linotype': {
+        'category': 'metals',
+        'caliber_kws': ['linotype', 'lino type'],
+        'grafs_query': None,
+        'midsouth_query': None,
+        'lg_query': None,
+        'ebay_query': 'linotype lead alloy casting bullets',
+        'rotometals_sku': 'linotype-lead-alloy',
+        'typical_unit': 'lb',
+    },
+}
 
-    best     = min(in_stock, key=lambda o: o.per_unit)
-    snapshot = {
-        "date":           TODAY,     "component_id":   comp_id,
-        "component_name": comp_name, "category":       category,
-        "best_per_unit":  best.per_unit, "best_price": best.price,
-        "best_qty":       best.qty,  "best_unit":      best.unit,
-        "best_vendor":    best.vendor, "best_url":     best.url,
-        "offer_count":    len(offers), "last_updated": TODAY,
-        "all_offers":     [asdict(o) for o in sorted(offers, key=lambda x: x.per_unit)[:10]],
-        **trends,
-    }
-    if dry_run:
-        log.info(f"  [DRY RUN] {comp_name}: ${best.per_unit:.4f}/{best.unit} "
-                 f"@ {best.vendor} | alert={trends.get('alert')}")
-        return best
-    db.collection("prices").document(comp_id).collection("history").document(TODAY).set(snapshot)
-    db.collection("prices").document(comp_id).set(snapshot)
-    log.info(f"  ✓ {comp_name}: ${best.per_unit:.4f}/{best.unit} @ {best.vendor} "
-             f"| alert={trends.get('alert')} | 7d={trends.get('trend_7d')}%")
-    return best
+ALL_COMPONENTS = {**BRASS_COMPONENTS, **PRIMER_COMPONENTS, **POWDER_COMPONENTS, **METAL_COMPONENTS}
 
-# ── Email alerts ──────────────────────────────────────────────────
-def send_alert_email(alerts):
-    if not alerts:
-        return
-    frm = os.environ.get("ALERT_EMAIL_FROM")
-    to  = os.environ.get("ALERT_EMAIL_TO")
-    pwd = os.environ.get("ALERT_EMAIL_PASS")
-    if not all([frm, to, pwd]):
-        log.info("  Email alerts not configured (set ALERT_EMAIL_FROM / TO / PASS)")
-        return
 
-    buy_list   = [a for a in alerts if a["alert"] == "buy"]
-    stock_list = [a for a in alerts if a["alert"] == "stock_up"]
-    subject    = (f"🟢 AMMO IQ: {len(buy_list)} BUY signal(s) — {TODAY}" if buy_list
-                  else f"⚠ AMMO IQ: {len(stock_list)} STOCK UP alert(s) — {TODAY}")
+# ═════════════════════════════════════════════════════════════════════════════
+# VENDOR: GRAFS.COM
+# ═════════════════════════════════════════════════════════════════════════════
 
-    def rows(items, trend_key, trend_label):
-        html = ""
-        for a in items:
-            html += f"""<tr>
-              <td style="padding:9px 14px;font-weight:600;">{a['name']}</td>
-              <td style="padding:9px 14px;font-weight:700;">${a['per_unit']:.4f}/{a['unit']}</td>
-              <td style="padding:9px 14px;">{a['vendor']}</td>
-              <td style="padding:9px 14px;">{a[trend_key]:+.1f}% {trend_label}</td>
-              <td style="padding:9px 14px;"><a href="{a['url']}">→ Buy</a></td>
-            </tr>"""
-        return html
+def scrape_grafs(query: str, caliber_kws: list[str]) -> list[dict]:
+    """
+    Search Grafs for a query and return matching offers.
+    KEY FIX v2.4: quantity is extracted from the product TITLE, not hardcoded.
+    """
+    url = f'https://www.grafs.com/search?query={requests.utils.quote(query)}'
+    log.info(f'  Grafs: {url}')
+    soup = fetch_html(url)
+    if not soup:
+        return []
 
-    def table(title, color, items, trend_key, trend_label):
-        if not items:
-            return ""
-        return f"""<h2 style="color:{color};margin-top:24px;">{title}</h2>
-        <table style="width:100%;border-collapse:collapse;font-size:13px;">
-          <thead><tr style="background:#f8f9fa;">
-            <th style="text-align:left;padding:8px 14px;">Component</th>
-            <th style="text-align:left;padding:8px 14px;">Best Price</th>
-            <th style="text-align:left;padding:8px 14px;">Vendor</th>
-            <th style="text-align:left;padding:8px 14px;">Trend</th>
-            <th style="text-align:left;padding:8px 14px;">Link</th>
-          </tr></thead>
-          <tbody>{rows(items, trend_key, trend_label)}</tbody>
-        </table>"""
+    results = []
 
-    body = f"""<html><body style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;">
-      <div style="background:#2d4a52;padding:20px 28px;border-radius:10px 10px 0 0;">
-        <h1 style="color:#fff;margin:0;font-size:24px;letter-spacing:2px;">AMMO IQ</h1>
-        <p style="color:rgba(255,255,255,0.65);margin:4px 0 0;font-size:13px;">Daily Price Intelligence — {TODAY}</p>
-      </div>
-      <div style="border:1px solid #dde3e5;border-top:none;padding:24px;border-radius:0 0 10px 10px;">
-        {table("🟢 Buy Now — Below 90-Day Average", "#27ae60", buy_list, "trend_7d", "7d")}
-        {table("⚠ Stock Up — Rising Fast", "#c07828", stock_list, "trend_30d", "30d")}
-        <p style="margin-top:24px;font-size:11px;color:#8fa8b0;">
-          AMMO IQ — The Practical Pewologist · <a href="#">Open Dashboard</a>
-        </p>
-      </div>
-    </body></html>"""
+    # Grafs search results: product cards
+    # Try multiple selectors for robustness
+    cards = (
+        soup.select('div.product-item-info') or
+        soup.select('li.product-item') or
+        soup.select('div.product-card') or
+        soup.select('article.product-item')
+    )
 
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"]    = frm
-        msg["To"]      = to
-        msg.attach(MIMEText(body, "html"))
-        host = os.environ.get("ALERT_SMTP_HOST", "smtp.gmail.com")
-        port = int(os.environ.get("ALERT_SMTP_PORT", "587"))
-        with smtplib.SMTP(host, port) as s:
-            s.ehlo(); s.starttls(); s.login(frm, pwd)
-            s.sendmail(frm, to, msg.as_string())
-        log.info(f"  ✉  Alert email sent to {to}")
-    except Exception as e:
-        log.error(f"  Email failed: {e}")
+    if not cards:
+        # Fallback: look for any element containing a price and a title
+        log.warning('    Grafs: no product cards found with standard selectors, trying fallback')
+        cards = soup.select('[class*="product"]')
 
-# ── Main ──────────────────────────────────────────────────────────
-def run_scraper():
-    args = parse_args()
-    if args.verbose:
-        log.setLevel(logging.DEBUG)
-
-    log.info("=" * 60)
-    log.info(f"AMMO IQ Scraper v2.5 — {TODAY}")
-    if args.dry_run:
-        log.info("*** DRY RUN — Firebase will NOT be written ***")
-    log.info("=" * 60)
-
-    with open(COMPONENTS_F) as f:
-        config = yaml.safe_load(f)
-
-    db = None
-    try:
-        db = init_firebase()
-        log.info("Firebase connected ✓")
-    except SystemExit:
-        if not args.dry_run:
-            raise
-        log.info("Firebase not configured — running dry-run without trend data")
-
-    cats = {
-        "metals":       config.get("metals",       []),
-        "powders":      config.get("powders",       []),
-        "primers":      config.get("primers",       []),
-        "brass":        config.get("brass",         []),
-        "coatings":     config.get("coatings",      []),
-        "factory_ammo": config.get("factory_ammo",  []),
-    }
-
-    if args.category:
-        cats = {k: v for k, v in cats.items() if k == args.category}
-    if args.component:
-        cats = {k: [c for c in v if c["id"] == args.component] for k, v in cats.items()}
-
-    stats  = {"success": 0, "no_data": 0, "error": 0}
-    alerts = []
-
-    for category, components in cats.items():
-        if not components:
+    for card in cards[:8]:   # cap at 8 results per search
+        # Title
+        title_el = (
+            card.select_one('a.product-item-link') or
+            card.select_one('.product-name a') or
+            card.select_one('[class*="product-name"]') or
+            card.select_one('a[href*="/product/"]') or
+            card.select_one('h2 a') or
+            card.select_one('h3 a')
+        )
+        if not title_el:
             continue
-        log.info(f"\n── {category.upper()} ({len(components)}) ──")
-        for comp in components:
-            comp_id, comp_name = comp["id"], comp["name"]
-            vendors = comp.get("vendors", ["powder_valley", "grafs", "midsouth"])
-            log.info(f"Scraping: {comp_name}")
-            all_offers = []
-            for vk in vendors:
-                fn = VENDOR_SCRAPERS.get(vk)
-                if not fn:
-                    log.warning(f"  No scraper registered for vendor '{vk}' — skipping")
-                    continue
-                try:
-                    found = fn(comp)
-                    if found:
-                        log.info(f"  {vk}: {len(found)} offer(s)")
-                    all_offers.extend(found)
-                except Exception as e:
-                    log.warning(f"  {vk} error: {e}")
+        title = title_el.get_text(strip=True)
+        href  = title_el.get('href', '')
 
-            if not all_offers:
-                log.warning(f"  ✗ No data: {comp_name}")
-                stats["no_data"] += 1
+        # Caliber guard — skip if title doesn't contain any caliber keyword
+        if caliber_kws and not title_contains_caliber(title, caliber_kws):
+            log.debug(f'    Grafs: skipping "{title[:60]}" — caliber mismatch')
+            continue
+
+        # Price
+        price_el = (
+            card.select_one('.price') or
+            card.select_one('[class*="price"]') or
+            card.select_one('span.price')
+        )
+        price = clean_price(price_el.get_text() if price_el else '')
+        if not price or price <= 0:
+            continue
+
+        # ── QUANTITY (v2.4 FIX) ─────────────────────────────────────────────
+        # First try to parse from title
+        qty = extract_qty_from_title(title)
+
+        # If not in title, look for a qty element on the card
+        if qty is None:
+            for sel in ['[class*="qty"]', '[class*="count"]', '[class*="pack"]']:
+                el = card.select_one(sel)
+                if el:
+                    qty = extract_qty_from_title(el.get_text())
+                    if qty:
+                        break
+
+        # Last resort: fetch the product page
+        if qty is None and href and href.startswith('http'):
+            log.info(f'    Grafs: fetching product page for qty → {href[:80]}')
+            time.sleep(REQUEST_DELAY)
+            prod_soup = fetch_html(href)
+            if prod_soup:
+                # Try page title first
+                qty = extract_qty_from_title(
+                    prod_soup.select_one('h1') and prod_soup.select_one('h1').get_text() or title
+                )
+                # Try description
+                if qty is None:
+                    desc = prod_soup.select_one('[class*="description"]') or prod_soup.select_one('[class*="detail"]')
+                    if desc:
+                        qty = extract_qty_from_title(desc.get_text())
+
+        if qty is None:
+            log.warning(f'    Grafs: could not determine qty for "{title[:60]}" — skipping')
+            continue
+
+        per_unit = price / qty
+        results.append({
+            'source': 'Grafs',
+            'title': title,
+            'url': href,
+            'price': price,
+            'qty': qty,
+            'per_unit': per_unit,
+        })
+        log.info(f'    Grafs ✓  {title[:55]}  ${price:.2f}/{qty} = ${per_unit:.4f}/unit')
+        time.sleep(REQUEST_DELAY)
+
+    return results
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# VENDOR: MIDSOUTH SHOOTERS SUPPLY
+# ═════════════════════════════════════════════════════════════════════════════
+
+def scrape_midsouth(query: str, caliber_kws: list[str]) -> list[dict]:
+    """
+    Search Midsouth for a query.
+    v2.4 FIX: caliber_kws must appear in title — prevents wrong-caliber price bleed.
+    """
+    url = f'https://www.midsouthshooterssupply.com/search#q={requests.utils.quote(query)}&t=product'
+    log.info(f'  Midsouth: {url}')
+    soup = fetch_html(url)
+    if not soup:
+        return []
+
+    results = []
+    cards = (
+        soup.select('div.product-item') or
+        soup.select('li.product-item') or
+        soup.select('[class*="product-tile"]') or
+        soup.select('[class*="product-card"]')
+    )
+
+    for card in cards[:8]:
+        title_el = (
+            card.select_one('a.product-title') or
+            card.select_one('[class*="product-name"] a') or
+            card.select_one('a[href*="/product/"]') or
+            card.select_one('h2 a') or
+            card.select_one('h3 a')
+        )
+        if not title_el:
+            continue
+        title = title_el.get_text(strip=True)
+        href  = title_el.get('href', '')
+        if href and not href.startswith('http'):
+            href = 'https://www.midsouthshooterssupply.com' + href
+
+        # ── CALIBER GUARD (v2.4 FIX) ────────────────────────────────────────
+        if caliber_kws and not title_contains_caliber(title, caliber_kws):
+            log.debug(f'    Midsouth: skipping "{title[:60]}" — caliber mismatch')
+            continue
+
+        price_el = (
+            card.select_one('[class*="price"]') or
+            card.select_one('.price')
+        )
+        price = clean_price(price_el.get_text() if price_el else '')
+        if not price or price <= 0:
+            continue
+
+        qty = extract_qty_from_title(title)
+        if qty is None:
+            # Try to get qty element (Midsouth sometimes shows "per 100")
+            qty_el = card.select_one('[class*="per"]')
+            if qty_el:
+                qty = extract_qty_from_title(qty_el.get_text())
+        if qty is None:
+            log.warning(f'    Midsouth: could not determine qty for "{title[:60]}" — skipping')
+            continue
+
+        per_unit = price / qty
+        results.append({
+            'source': 'Midsouth',
+            'title': title,
+            'url': href,
+            'price': price,
+            'qty': qty,
+            'per_unit': per_unit,
+        })
+        log.info(f'    Midsouth ✓  {title[:55]}  ${price:.2f}/{qty} = ${per_unit:.4f}/unit')
+        time.sleep(REQUEST_DELAY)
+
+    return results
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# VENDOR: LUCKY GUNNER
+# ═════════════════════════════════════════════════════════════════════════════
+
+def scrape_lucky_gunner(query: str, caliber_kws: list[str]) -> list[dict]:
+    """
+    Search Lucky Gunner for brass.
+    v2.4 FIX: each product is matched individually — no more first-result bleed.
+    """
+    url = f'https://www.luckygunner.com/search?q={requests.utils.quote(query)}'
+    log.info(f'  Lucky Gunner: {url}')
+    soup = fetch_html(url)
+    if not soup:
+        return []
+
+    results = []
+    cards = (
+        soup.select('div.product-details') or
+        soup.select('[class*="ammo-listing"]') or
+        soup.select('[class*="product-item"]') or
+        soup.select('div.listing')
+    )
+
+    for card in cards[:10]:
+        # Title — each card individually (v2.4 fix: was reading from stale variable)
+        title_el = (
+            card.select_one('h2') or
+            card.select_one('h3') or
+            card.select_one('[class*="title"]') or
+            card.select_one('[class*="name"]')
+        )
+        if not title_el:
+            continue
+        title = title_el.get_text(strip=True)
+        href_el = card.select_one('a[href]')
+        href = href_el['href'] if href_el else ''
+        if href and not href.startswith('http'):
+            href = 'https://www.luckygunner.com' + href
+
+        if caliber_kws and not title_contains_caliber(title, caliber_kws):
+            continue
+
+        # Lucky Gunner shows per-round price AND total — look for the per-unit price
+        # They typically display "X¢/rd" or "$X.XX/50"
+        price_text = card.get_text()
+
+        # Try to find "N¢ per round" or "$N per round" or "$/round"
+        cpr_match = re.search(r'([\d.]+)\s*[¢¢]\s*(?:per|/)\s*(?:round|rd)', price_text, re.I)
+        if cpr_match:
+            per_unit = float(cpr_match.group(1)) / 100.0
+            results.append({
+                'source': 'Lucky Gunner',
+                'title': title,
+                'url': href,
+                'price': None,
+                'qty': 1,
+                'per_unit': per_unit,
+            })
+            log.info(f'    LG ✓  {title[:55]}  {cpr_match.group(1)}¢/rd = ${per_unit:.4f}/unit')
+            continue
+
+        # Fallback: total price ÷ quantity
+        price_el = card.select_one('[class*="price"]') or card.select_one('.price')
+        price = clean_price(price_el.get_text() if price_el else '')
+        qty   = extract_qty_from_title(title) or extract_qty_from_title(price_text)
+        if price and qty:
+            per_unit = price / qty
+            results.append({
+                'source': 'Lucky Gunner',
+                'title': title,
+                'url': href,
+                'price': price,
+                'qty': qty,
+                'per_unit': per_unit,
+            })
+            log.info(f'    LG ✓  {title[:55]}  ${price:.2f}/{qty} = ${per_unit:.4f}/unit')
+
+    return results
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# VENDOR: POWDER VALLEY
+# ═════════════════════════════════════════════════════════════════════════════
+
+def scrape_powder_valley(query: str, caliber_kws: list[str]) -> list[dict]:
+    url = f'https://www.powdervalleyinc.com/search?q={requests.utils.quote(query)}'
+    log.info(f'  Powder Valley: {url}')
+    soup = fetch_html(url)
+    if not soup:
+        return []
+
+    results = []
+    cards = (
+        soup.select('[class*="product-card"]') or
+        soup.select('[class*="product-item"]') or
+        soup.select('div.product')
+    )
+
+    for card in cards[:6]:
+        title_el = card.select_one('a') or card.select_one('[class*="name"]')
+        if not title_el:
+            continue
+        title = title_el.get_text(strip=True)
+        href  = title_el.get('href', '')
+        if href and not href.startswith('http'):
+            href = 'https://www.powdervalleyinc.com' + href
+
+        if caliber_kws and not title_contains_caliber(title, caliber_kws):
+            continue
+
+        price_el = card.select_one('[class*="price"]') or card.select_one('.price')
+        price = clean_price(price_el.get_text() if price_el else '')
+        qty   = extract_qty_from_title(title)
+
+        if price and qty:
+            per_unit = price / qty
+            results.append({
+                'source': 'Powder Valley',
+                'title': title,
+                'url': href,
+                'price': price,
+                'qty': qty,
+                'per_unit': per_unit,
+            })
+            log.info(f'    PV ✓  {title[:55]}  ${price:.2f}/{qty} = ${per_unit:.4f}/unit')
+            time.sleep(REQUEST_DELAY)
+
+    return results
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# VENDOR: ROTOMETALS (metals — lead, alloys)
+# ═════════════════════════════════════════════════════════════════════════════
+
+ROTOMETALS_PRODUCTS = {
+    'pure-lead-ingots': {
+        'url': 'https://www.rotometals.com/pure-soft-lead-ingots/',
+        'unit': 'lb',
+    },
+    'lyman-2-bullet-alloy': {
+        'url': 'https://www.rotometals.com/lyman-2-alloy/',
+        'unit': 'lb',
+    },
+    'linotype-lead-alloy': {
+        'url': 'https://www.rotometals.com/linotype/',
+        'unit': 'lb',
+    },
+}
+
+def scrape_rotometals(sku: str) -> list[dict]:
+    info = ROTOMETALS_PRODUCTS.get(sku)
+    if not info:
+        return []
+    url = info['url']
+    log.info(f'  Rotometals: {url}')
+    soup = fetch_html(url)
+    if not soup:
+        return []
+
+    results = []
+    # Rotometals product page: price by weight tier
+    # Look for price per lb from the product options or price table
+    price_els = soup.select('[class*="price"]')
+    for el in price_els[:3]:
+        text = el.get_text(strip=True)
+        price = clean_price(text)
+        if price and price > 0:
+            # Look for weight in same context
+            context = el.parent.get_text() if el.parent else text
+            qty_match = re.search(r'(\d+)\s*(?:lb|lbs|pound)', context, re.I)
+            qty = int(qty_match.group(1)) if qty_match else 1
+            per_unit = price / qty
+            results.append({
+                'source': 'Rotometals',
+                'title': soup.select_one('h1').get_text(strip=True) if soup.select_one('h1') else sku,
+                'url': url,
+                'price': price,
+                'qty': qty,
+                'per_unit': per_unit,
+            })
+            log.info(f'    Rotometals ✓  ${price:.2f}/{qty}lb = ${per_unit:.4f}/lb')
+            break  # take first (lowest) price
+
+    return results
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# VENDOR: BROWNELLS (Playwright — JS-rendered)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def scrape_brownells(query: str, caliber_kws: list[str]) -> list[dict]:
+    if not HAS_PLAYWRIGHT:
+        log.warning('  Brownells: Playwright not installed, skipping.')
+        return []
+
+    url = f'https://www.brownells.com/search/index.htm?k={requests.utils.quote(query)}'
+    log.info(f'  Brownells (Playwright): {url}')
+    results = []
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.set_extra_http_headers({'User-Agent': SESSION.headers['User-Agent']})
+            page.goto(url, timeout=30000, wait_until='domcontentloaded')
+            page.wait_for_timeout(3000)
+            content = page.content()
+            browser.close()
+
+        soup = BeautifulSoup(content, 'html.parser')
+        cards = (
+            soup.select('[class*="product-card"]') or
+            soup.select('[class*="product-item"]') or
+            soup.select('[data-sku]')
+        )
+        for card in cards[:6]:
+            title_el = card.select_one('[class*="name"]') or card.select_one('a')
+            if not title_el:
+                continue
+            title = title_el.get_text(strip=True)
+            href  = title_el.get('href', '')
+
+            if caliber_kws and not title_contains_caliber(title, caliber_kws):
                 continue
 
-            # Drop offers that are unrealistically cheap (accessories, targets, etc.)
-            floor = CATEGORY_MIN_PER_UNIT.get(category, 0)
-            if floor > 0:
-                floored = [o for o in all_offers if o.per_unit >= floor]
-                if floored:
-                    dropped = len(all_offers) - len(floored)
-                    if dropped:
-                        log.debug(f"  Price floor ${floor}/unit dropped {dropped} offer(s)")
-                    all_offers = floored
-                else:
-                    log.warning(f"  Price floor ${floor}/unit would drop ALL offers — keeping originals")
+            price_el = card.select_one('[class*="price"]')
+            price    = clean_price(price_el.get_text() if price_el else '')
+            qty      = extract_qty_from_title(title)
 
-            try:
-                in_stock      = [o for o in all_offers if o.in_stock] or all_offers
-                best_per_unit = min(o.per_unit for o in in_stock)
-                trends        = compute_trends(db, comp_id, best_per_unit)
-                best          = write_to_firebase(
-                    db, comp_id, comp_name, category,
-                    all_offers, trends, args.dry_run,
-                )
-                if best and trends.get("alert") in ("buy", "stock_up") and not args.no_email:
-                    alerts.append({
-                        "name":      comp_name,
-                        "per_unit":  best.per_unit,
-                        "unit":      best.unit,
-                        "vendor":    best.vendor,
-                        "url":       best.url,
-                        "alert":     trends["alert"],
-                        "trend_7d":  trends.get("trend_7d")  or 0.0,
-                        "trend_30d": trends.get("trend_30d") or 0.0,
-                    })
-                stats["success"] += 1
-            except Exception as e:
-                log.error(f"  ✗ Error: {comp_name}: {e}")
-                stats["error"] += 1
+            if price and qty:
+                per_unit = price / qty
+                results.append({
+                    'source': 'Brownells',
+                    'title': title,
+                    'url': 'https://www.brownells.com' + href if href and not href.startswith('http') else href,
+                    'price': price,
+                    'qty': qty,
+                    'per_unit': per_unit,
+                })
+                log.info(f'    Brownells ✓  {title[:55]}  ${price:.2f}/{qty} = ${per_unit:.4f}/unit')
 
-    if alerts and not args.dry_run and not args.no_email:
-        send_alert_email(alerts)
-    elif alerts and args.dry_run:
-        log.info(f"\n[DRY RUN] Would email {len(alerts)} alert(s):")
-        for a in alerts:
-            log.info(f"  {a['alert'].upper()}: {a['name']} ${a['per_unit']:.4f}/{a['unit']}")
+    except Exception as e:
+        log.warning(f'  Brownells: Playwright error — {e}')
 
-    log.info("\n" + "=" * 60)
+    return results
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# VENDOR: eBay Browse API  (NEW in v2.4)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _get_ebay_token() -> str | None:
+    """Get (or refresh) an eBay OAuth Client Credentials token."""
+    now = time.time()
+    if _ebay_token_cache['token'] and now < _ebay_token_cache['expires'] - 60:
+        return _ebay_token_cache['token']
+
+    auth = base64.b64encode(f'{EBAY_APP_ID}:{EBAY_CERT_ID}'.encode()).decode()
+    try:
+        r = requests.post(
+            EBAY_TOKEN_URL,
+            headers={
+                'Authorization': f'Basic {auth}',
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            data='grant_type=client_credentials&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope',
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
+        token = data.get('access_token')
+        expires_in = int(data.get('expires_in', 7200))
+        _ebay_token_cache['token'] = token
+        _ebay_token_cache['expires'] = now + expires_in
+        log.info(f'  eBay: OAuth token obtained (expires in {expires_in}s)')
+        return token
+    except Exception as e:
+        log.error(f'  eBay: token fetch failed — {e}')
+        return None
+
+
+def scrape_ebay(query: str, caliber_kws: list[str], max_price_per_unit: float = 5.0) -> list[dict]:
+    """
+    Search eBay Browse API for the given query.
+    NOTE: Only brass cases and metal alloys are appropriate eBay searches.
+          Primers and powder are prohibited on eBay — pass ebay_query=None for those.
+
+    Returns list of offer dicts with per_unit price.
+    """
+    token = _get_ebay_token()
+    if not token:
+        return []
+
+    params = {
+        'q': query,
+        'filter': 'buyingOptions:{FIXED_PRICE},conditions:{NEW|USED_EXCELLENT}',
+        'sort': 'price',
+        'limit': '20',
+        'fieldgroups': 'MATCHING_ITEMS',
+    }
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
+        'Content-Type': 'application/json',
+    }
+
+    log.info(f'  eBay: "{query}"')
+    try:
+        r = requests.get(EBAY_BROWSE_URL, params=params, headers=headers, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        log.warning(f'  eBay: API request failed — {e}')
+        return []
+
+    items = data.get('itemSummaries', [])
+    if not items:
+        log.info('  eBay: no results returned')
+        return []
+
+    results = []
+    for item in items:
+        title     = item.get('title', '')
+        price_val = float(item.get('price', {}).get('value', 0) or 0)
+        item_url  = item.get('itemWebUrl', '')
+        condition = item.get('condition', '')
+
+        if not title or price_val <= 0:
+            continue
+
+        # Caliber guard
+        if caliber_kws and not title_contains_caliber(title, caliber_kws):
+            continue
+
+        # Skip auction-only listings (shouldn't happen with filter but double-check)
+        buying_options = item.get('buyingOptions', [])
+        if 'FIXED_PRICE' not in buying_options and buying_options:
+            continue
+
+        # Quantity from title
+        qty = extract_qty_from_title(title)
+        if qty is None:
+            # eBay items often have quantity in the subtitle or additionalImages count
+            # Try additional text fields
+            for field in ['shortDescription', 'itemGroupType']:
+                extra = item.get(field, '')
+                if extra:
+                    qty = extract_qty_from_title(extra)
+                    if qty:
+                        break
+
+        if qty is None:
+            log.debug(f'    eBay: skipping "{title[:60]}" — qty unknown')
+            continue
+
+        per_unit = price_val / qty
+
+        # Sanity filter — reject wildly overpriced listings
+        if per_unit > max_price_per_unit:
+            log.debug(f'    eBay: skipping "{title[:60]}" — ${per_unit:.4f}/unit exceeds ceiling')
+            continue
+
+        results.append({
+            'source': 'eBay',
+            'title': title,
+            'url': item_url,
+            'price': price_val,
+            'qty': qty,
+            'per_unit': per_unit,
+            'condition': condition,
+        })
+        log.info(f'    eBay ✓  {title[:55]}  ${price_val:.2f}/{qty} = ${per_unit:.4f}/unit [{condition}]')
+
+    return results
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ORCHESTRATOR — scrape one component across all applicable vendors
+# ═════════════════════════════════════════════════════════════════════════════
+
+def scrape_component(comp_id: str, comp: dict) -> dict | None:
+    """
+    Run all applicable vendor scrapers for one component.
+    Returns a result dict ready for Firestore, or None if no data found.
+    """
+    log.info(f'\n── {comp_id} ({comp["category"]}) ──────────────────────────')
+    all_offers: list[dict] = []
+
+    # Grafs
+    if comp.get('grafs_query'):
+        try:
+            all_offers += scrape_grafs(comp['grafs_query'], comp.get('caliber_kws', []))
+        except Exception as e:
+            log.error(f'  Grafs error: {e}')
+        time.sleep(REQUEST_DELAY)
+
+    # Midsouth
+    if comp.get('midsouth_query'):
+        try:
+            all_offers += scrape_midsouth(comp['midsouth_query'], comp.get('caliber_kws', []))
+        except Exception as e:
+            log.error(f'  Midsouth error: {e}')
+        time.sleep(REQUEST_DELAY)
+
+    # Lucky Gunner
+    if comp.get('lg_query'):
+        try:
+            all_offers += scrape_lucky_gunner(comp['lg_query'], comp.get('caliber_kws', []))
+        except Exception as e:
+            log.error(f'  Lucky Gunner error: {e}')
+        time.sleep(REQUEST_DELAY)
+
+    # Powder Valley
+    if comp.get('pv_query'):
+        try:
+            all_offers += scrape_powder_valley(comp['pv_query'], comp.get('caliber_kws', []))
+        except Exception as e:
+            log.error(f'  Powder Valley error: {e}')
+        time.sleep(REQUEST_DELAY)
+
+    # Rotometals (metals only)
+    if comp.get('rotometals_sku'):
+        try:
+            all_offers += scrape_rotometals(comp['rotometals_sku'])
+        except Exception as e:
+            log.error(f'  Rotometals error: {e}')
+        time.sleep(REQUEST_DELAY)
+
+    # eBay
+    if comp.get('ebay_query'):
+        try:
+            all_offers += scrape_ebay(comp['ebay_query'], comp.get('caliber_kws', []))
+        except Exception as e:
+            log.error(f'  eBay error: {e}')
+        time.sleep(1)  # eBay API doesn't need as much delay
+
+    if not all_offers:
+        log.warning(f'  No offers found for {comp_id}')
+        return None
+
+    # Find best (lowest per_unit)
+    best = min(all_offers, key=lambda x: x['per_unit'])
+
+    result = {
+        'category':     comp['category'],
+        'best_per_unit': best['per_unit'],
+        'best_source':   best['source'],
+        'best_title':    best['title'],
+        'best_url':      best['url'],
+        'best_qty':      best.get('qty'),
+        'best_price':    best.get('price'),
+        'typical_unit':  comp.get('typical_unit', 'unit'),
+        'all_offers': [
+            {k: v for k, v in o.items() if k != 'condition'}
+            for o in sorted(all_offers, key=lambda x: x['per_unit'])
+        ],
+        'offer_count': len(all_offers),
+    }
+
     log.info(
-        f"Done — ✓{stats['success']} written  ✗{stats['no_data']} no data  "
-        f"⚠{stats['error']} errors  📬{len(alerts)} alerts"
+        f'  ★ BEST: {best["source"]} — {best["title"][:50]} '
+        f'@ ${best["per_unit"]:.4f}/{comp.get("typical_unit","unit")}'
     )
-    if args.dry_run:
-        log.info("DRY RUN complete — Firebase unchanged")
-    log.info("=" * 60)
+    return result
 
 
-if __name__ == "__main__":
-    run_scraper()
+# ═════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ═════════════════════════════════════════════════════════════════════════════
+
+def main():
+    log.info('═' * 60)
+    log.info('AMMO IQ Scraper v2.4')
+    log.info(f'Started: {datetime.datetime.utcnow().isoformat()}Z')
+    log.info('═' * 60)
+
+    db = init_firebase()
+
+    success = 0
+    errors  = 0
+
+    for comp_id, comp in ALL_COMPONENTS.items():
+        try:
+            result = scrape_component(comp_id, comp)
+            if result:
+                write_component(db, comp_id, result)
+                success += 1
+            else:
+                errors += 1
+        except Exception as e:
+            log.error(f'FATAL error on {comp_id}: {e}', exc_info=True)
+            errors += 1
+
+        # Polite pause between components
+        time.sleep(REQUEST_DELAY)
+
+    log.info('\n' + '═' * 60)
+    log.info(f'Done. {success} components priced, {errors} failed.')
+    log.info(f'Finished: {datetime.datetime.utcnow().isoformat()}Z')
+    log.info('═' * 60)
+
+    if errors > 0:
+        sys.exit(1)  # signals GitHub Actions failure
+
+
+if __name__ == '__main__':
+    main()

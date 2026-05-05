@@ -1,14 +1,6 @@
-# Core scraping
+# AMMO IQ Scraper v2.4 — dependencies
 requests==2.31.0
 beautifulsoup4==4.12.3
-lxml==5.1.0
-pyyaml==6.0.1
-
-# JS-rendered pages (AmmoSeek, Target Sports)
-playwright==1.43.0
-
-# Firebase
-firebase-admin==6.4.0
-
-# Utilities
-python-dotenv==1.0.0
+lxml==5.2.1
+firebase-admin==6.5.0
+playwright==1.44.0
