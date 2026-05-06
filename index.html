@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AMMO IQ — Reloading Intelligence Platform</title>
+<title>Ammo Radar — Live Ammo Price Intelligence</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
@@ -119,9 +119,8 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(19
 
       <!-- Title row -->
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 24px 6px;">
-        <div style="display:flex;align-items:baseline;gap:10px;">
-          <div class="logo-main">AMMO <span>IQ</span></div>
-          <div class="logo-tag">Reloading Intelligence</div>
+        <div style="display:flex;align-items:center;">
+          <svg viewBox="0 0 210 54" xmlns="http://www.w3.org/2000/svg" style="width:175px;height:auto;"><defs><radialGradient id="arBg" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#0d2a20"/><stop offset="100%" stop-color="#061210"/></radialGradient><linearGradient id="arSw" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#00ff88" stop-opacity="0"/><stop offset="100%" stop-color="#00ff88" stop-opacity="0.55"/></linearGradient></defs><g transform="translate(27,27)"><circle r="25" fill="url(#arBg)" stroke="#1a4a35" stroke-width="1"/><circle r="8" fill="none" stroke="#1e5c3a" stroke-width="0.5" opacity="0.7"/><circle r="17" fill="none" stroke="#1e5c3a" stroke-width="0.5" opacity="0.7"/><circle r="24" fill="none" stroke="#1e5c3a" stroke-width="0.7" opacity="0.8"/><line x1="-24" y1="0" x2="24" y2="0" stroke="#1e5c3a" stroke-width="0.5" opacity="0.6"/><line x1="0" y1="-24" x2="0" y2="24" stroke="#1e5c3a" stroke-width="0.5" opacity="0.6"/><g style="transform-origin:0 0;animation:arSpin 6s linear infinite"><path d="M0,0 L0,-25 A25,25 0 0,1 21.7,-12.5 Z" fill="url(#arSw)" opacity="0.8"/><line x1="0" y1="0" x2="0" y2="-25" stroke="#00ff88" stroke-width="1" opacity="0.9"/></g><circle r="2" fill="#00ff88"/><circle cx="10" cy="-16" r="1.8" fill="#00ff88" opacity="0.55"/><circle cx="16" cy="11" r="1.8" fill="#00ff88" opacity="0.55"/><circle cx="-14" cy="12" r="1.8" fill="#00ff88" opacity="0.55"/><circle cx="-12" cy="-15" r="1.8" fill="#00ff88" opacity="0.55"/></g><text x="58" y="24" font-family="Impact,Arial Black,sans-serif" font-size="19" fill="#3a8a60" letter-spacing="2">AMMO</text><text x="58" y="46" font-family="Impact,Arial Black,sans-serif" font-size="19" fill="#f0a800" letter-spacing="2">RADAR</text><style>@keyframes arSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style></svg>
         </div>
         <div style="display:flex;align-items:center;gap:16px;">
           <div class="last-updated"><div class="pulse"></div><span id="lu-txt">Loading...</span></div>
@@ -251,7 +250,7 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(19
   <div class="settings-grid">
     <div class="panel">
       <div class="panel-title">Firebase Config</div>
-      <div class="form-group" style="margin-bottom:12px;"><label>Project ID</label><input type="text" id="cfg-pid" placeholder="ammiq-d63b2"></div>
+      <div class="form-group" style="margin-bottom:12px;"><label>Project ID</label><input type="text" id="cfg-pid" placeholder="ammo-radar-pricing"></div>
       <div class="form-group" style="margin-bottom:12px;"><label>API Key</label><input type="password" id="cfg-key" placeholder="AIza..."></div>
       <button class="btn" style="width:100%;margin-bottom:6px;" onclick="saveConfig()">Save Config</button>
       <button class="btn ghost" style="width:100%;" onclick="testConn()">Test Connection</button>
@@ -279,9 +278,9 @@ let db=null,ALL={},HIST={};
 async function init(){
   // Hardcoded Firebase config — update these if your project changes
   const FIREBASE_CONFIG = {
-    apiKey:     localStorage.getItem('ammiq_key') || 'AIzaSyAx4_EwiHOeI7DTh-wdcC0el1Y0VeTLkW8',
-    projectId:  localStorage.getItem('ammiq_pid') || 'ammiq-d63b2',
-    authDomain: (localStorage.getItem('ammiq_pid') || 'ammiq-d63b2') + '.firebaseapp.com',
+    apiKey:     localStorage.getItem('ammo_radar_key') || 'AIzaSyAx4_EwiHOeI7DTh-wdcC0el1Y0VeTLkW8',
+    projectId:  localStorage.getItem('ammo_radar_pid') || 'ammo-radar-pricing',
+    authDomain: (localStorage.getItem('ammo_radar_pid') || 'ammo-radar-pricing') + '.firebaseapp.com',
   };
   try{
     const app=initializeApp(FIREBASE_CONFIG);
@@ -452,7 +451,7 @@ window.showPage=id=>{
   document.querySelectorAll('.nav-btn')[idx]?.classList.add('active');
 };
 window.manualRefresh=()=>load();
-window.saveConfig=()=>{localStorage.setItem('ammiq_pid',document.getElementById('cfg-pid')?.value||'');localStorage.setItem('ammiq_key',document.getElementById('cfg-key')?.value||'');document.getElementById('cfg-status').textContent='✓ Saved — reload to apply.';};
+window.saveConfig=()=>{localStorage.setItem('ammo_radar_pid',document.getElementById('cfg-pid')?.value||'');localStorage.setItem('ammo_radar_key',document.getElementById('cfg-key')?.value||'');document.getElementById('cfg-status').textContent='✓ Saved — reload to apply.';};
 window.testConn=()=>{document.getElementById('cfg-status').textContent='Testing…';setTimeout(()=>{document.getElementById('cfg-status').textContent=db?'✓ Connected to Firebase':'✗ Not connected — check credentials';},800);};
 window.addComp=()=>{const name=document.getElementById('nc-name')?.value.trim();if(!name){alert('Name required');return;}alert(`"${name}" added.\n\nIt will be scraped on the next daily run.\nTo scrape immediately:\n  cd scraper && python scraper.py`);};
 window.connectFirst=()=>{const pid=document.getElementById('first-pid')?.value.trim();if(!pid){alert('Enter your F.I.R.S.T. Project ID');return;}document.getElementById('first-status').textContent='Connecting to '+pid+'…';setTimeout(()=>{document.getElementById('first-status').textContent='✓ Connected — loading session data…';},1200);};
