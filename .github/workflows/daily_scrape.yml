@@ -10,9 +10,6 @@ jobs:
     name: Scrape & Update Prices
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: scraper
 
     steps:
       - name: Checkout repo
@@ -24,11 +21,13 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
+        working-directory: scraper
         run: |
           pip install -r requirements.txt
           playwright install chromium --with-deps
 
       - name: Run Ammo Radar scraper
+        working-directory: scraper
         env:
           FIREBASE_CREDENTIALS:  ${{ secrets.FIREBASE_CREDENTIALS }}
           FIREBASE_PROJECT_ID:   ${{ secrets.FIREBASE_PROJECT_ID }}
