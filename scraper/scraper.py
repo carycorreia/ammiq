@@ -86,7 +86,7 @@ def init_firebase():
             sys.exit(1)
         cred = credentials.Certificate(cred_file)
     firebase_admin.initialize_app(cred, {
-        "projectId": os.environ.get("FIREBASE_PROJECT_ID", "ammo-radar-pricing")
+        "projectId": os.environ.get("FIREBASE_PROJECT_ID", "ammiq-d63b2")
     })
     return firestore.client()
 
@@ -166,7 +166,7 @@ def scrape_powder_valley(component):
 def scrape_grafs(component):
     offers = []
     for term in component.get("search_terms", [])[:2]:
-        url  = f"https://www.grafs.com/search?query={requests.utils.quote(term)}"
+        url  = f"https://www.grafs.com/retail/catalog/search?keywords={requests.utils.quote(term)}"
         soup = fetch_static(url)
         if not soup: continue
         for card in soup.select(".product-item, .item.product")[:5]:
