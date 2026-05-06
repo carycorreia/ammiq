@@ -282,7 +282,7 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(19
   <div class="settings-grid">
     <div class="panel">
       <div class="panel-title">Firebase Config</div>
-      <div class="form-group" style="margin-bottom:12px;"><label>Project ID</label><input type="text" id="cfg-pid" placeholder="ammo-radar-pricing"></div>
+      <div class="form-group" style="margin-bottom:12px;"><label>Project ID</label><input type="text" id="cfg-pid" placeholder="ammiq-d63b2"></div>
       <div class="form-group" style="margin-bottom:12px;"><label>API Key</label><input type="password" id="cfg-key" placeholder="AIza..."></div>
       <button class="btn" style="width:100%;margin-bottom:6px;" onclick="saveConfig()">Save Config</button>
       <button class="btn ghost" style="width:100%;" onclick="testConn()">Test Connection</button>
@@ -310,9 +310,9 @@ let db=null,ALL={},HIST={};
 async function init(){
   // Hardcoded Firebase config — update these if your project changes
   const FIREBASE_CONFIG = {
-    apiKey:     localStorage.getItem('ammo_radar_key') || 'AIzaSyAx4_EwiHOeI7DTh-wdcC0el1Y0VeTLkW8',
-    projectId:  localStorage.getItem('ammo_radar_pid') || 'ammo-radar-pricing',
-    authDomain: (localStorage.getItem('ammo_radar_pid') || 'ammo-radar-pricing') + '.firebaseapp.com',
+    apiKey:     localStorage.getItem('ammiq_key') || 'AIzaSyAx4_EwiHOeI7DTh-wdcC0el1Y0VeTLkW8',
+    projectId:  localStorage.getItem('ammiq_pid') || 'ammiq-d63b2',
+    authDomain: (localStorage.getItem('ammiq_pid') || 'ammiq-d63b2') + '.firebaseapp.com',
   };
   try{
     const app=initializeApp(FIREBASE_CONFIG);
@@ -483,7 +483,7 @@ window.showPage=id=>{
   document.querySelectorAll('.nav-btn')[idx]?.classList.add('active');
 };
 window.manualRefresh=()=>load();
-window.saveConfig=()=>{localStorage.setItem('ammo_radar_pid',document.getElementById('cfg-pid')?.value||'');localStorage.setItem('ammo_radar_key',document.getElementById('cfg-key')?.value||'');document.getElementById('cfg-status').textContent='✓ Saved — reload to apply.';};
+window.saveConfig=()=>{localStorage.setItem('ammiq_pid',document.getElementById('cfg-pid')?.value||'');localStorage.setItem('ammiq_key',document.getElementById('cfg-key')?.value||'');document.getElementById('cfg-status').textContent='✓ Saved — reload to apply.';};
 window.testConn=()=>{document.getElementById('cfg-status').textContent='Testing…';setTimeout(()=>{document.getElementById('cfg-status').textContent=db?'✓ Connected to Firebase':'✗ Not connected — check credentials';},800);};
 window.addComp=()=>{const name=document.getElementById('nc-name')?.value.trim();if(!name){alert('Name required');return;}alert(`"${name}" added.\n\nIt will be scraped on the next daily run.\nTo scrape immediately:\n  cd scraper && python scraper.py`);};
 window.connectFirst=()=>{const pid=document.getElementById('first-pid')?.value.trim();if(!pid){alert('Enter your F.I.R.S.T. Project ID');return;}document.getElementById('first-status').textContent='Connecting to '+pid+'…';setTimeout(()=>{document.getElementById('first-status').textContent='✓ Connected — loading session data…';},1200);};
