@@ -1,6 +1,6 @@
-# AMMO IQ Scraper v2.4 — dependencies
-requests==2.31.0
-beautifulsoup4==4.12.3
-lxml==5.2.1
-firebase-admin==6.5.0
-playwright==1.44.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+pyyaml>=6.0
+firebase-admin>=6.4.0
+playwright>=1.44.0
+lxml>=5.0.0
