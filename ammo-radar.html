@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Ammo Radar — Live Ammo Price Intelligence</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0b1a1f;
+      --scope-bg:  #061210;
+      --green:     #00ff88;
+      --green-dim: #1e6040;
+      --green-mid: #1e5c3a;
+      --amber:     #f0a800;
+      --text:      #c8ddd4;
+      --text-dim:  #3a7a5a;
+      --panel:     #0d2118;
+      --border:    #1a4a35;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Courier New', Courier, monospace;
+      overflow-x: hidden;
+    }
+
+    /* ══ HEADER ══ */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 40px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(11,26,31,0.95);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .logo-wrap {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .logo-wrap svg { width: 160px; height: auto; }
+
+    .nav a {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 12px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-left: 28px;
+      transition: color 0.2s;
+    }
+    .nav a:hover { color: var(--green); }
+
+    /* ══ HERO ══ */
+    .hero {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 80px 40px 60px;
+      text-align: center;
+      position: relative;
+    }
+
+    .hero-logo svg {
+      width: min(520px, 90vw);
+      height: auto;
+      filter: drop-shadow(0 0 32px rgba(0,255,136,0.15));
+    }
+
+    .hero h1 {
+      font-family: Impact, 'Arial Black', sans-serif;
+      font-size: clamp(14px, 2vw, 18px);
+      letter-spacing: 4px;
+      color: var(--text-dim);
+      margin-top: 28px;
+      text-transform: uppercase;
+    }
+
+    .hero p {
+      max-width: 560px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: #6aaa8a;
+      margin-top: 14px;
+    }
+
+    .cta {
+      display: inline-block;
+      margin-top: 32px;
+      padding: 12px 32px;
+      border: 1px solid var(--green);
+      color: var(--green);
+      text-decoration: none;
+      font-size: 12px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      transition: background 0.2s, color 0.2s;
+    }
+    .cta:hover { background: var(--green); color: var(--bg); }
+
+    /* ══ PRICE TABLE ══ */
+    .section {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 48px 24px;
+    }
+
+    .section-title {
+      font-size: 11px;
+      letter-spacing: 3px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      margin-bottom: 20px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    thead th {
+      text-align: left;
+      font-size: 10px;
+      letter-spacing: 2px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    tbody tr {
+      border-bottom: 1px solid rgba(26,74,53,0.4);
+      transition: background 0.15s;
+    }
+    tbody tr:hover { background: rgba(0,255,136,0.04); }
+
+    tbody td {
+      padding: 11px 12px;
+      color: var(--text);
+    }
+
+    .cat-tag {
+      display: inline-block;
+      font-size: 10px;
+      letter-spacing: 1px;
+      padding: 2px 7px;
+      border-radius: 2px;
+      background: rgba(26,74,53,0.6);
+      color: var(--green);
+      border: 1px solid var(--border);
+    }
+
+    .price-best  { color: var(--green);  font-weight: bold; }
+    .price-mid   { color: var(--text); }
+    .vendor-link { color: var(--amber); text-decoration: none; }
+    .vendor-link:hover { text-decoration: underline; }
+
+    .signal-buy  { color: var(--green); font-size: 10px; letter-spacing: 1px; }
+    .signal-watch{ color: var(--amber); font-size: 10px; letter-spacing: 1px; }
+
+    /* ══ FEATURES ══ */
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 20px;
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 24px 64px;
+    }
+
+    .feature-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 24px 20px;
+    }
+
+    .feature-card .icon {
+      font-size: 22px;
+      margin-bottom: 12px;
+    }
+
+    .feature-card h3 {
+      font-size: 12px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--green);
+      margin-bottom: 8px;
+    }
+
+    .feature-card p {
+      font-size: 12px;
+      line-height: 1.65;
+      color: #6aaa8a;
+    }
+
+    /* ══ FOOTER ══ */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 24px 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--text-dim);
+      letter-spacing: 1px;
+    }
+
+    footer a { color: var(--text-dim); text-decoration: none; }
+    footer a:hover { color: var(--green); }
+
+    .dot-pulse {
+      display: inline-block;
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      margin-right: 6px;
+      animation: pulse 2s ease-in-out infinite;
+      vertical-align: middle;
+    }
+
+    @keyframes pulse {
+      0%,100% { opacity: 1; box-shadow: 0 0 4px var(--green); }
+      50%      { opacity: 0.4; box-shadow: none; }
+    }
+
+    /* ══ RESPONSIVE ══ */
+    @media (max-width: 600px) {
+      header { padding: 14px 18px; }
+      .nav { display: none; }
+      .hero { padding: 40px 18px 36px; }
+      footer { flex-direction: column; gap: 8px; text-align: center; }
+      thead th:nth-child(4),
+      tbody td:nth-child(4) { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══ HEADER ══ -->
+<header>
+  <div class="logo-wrap">
+    <!-- Compact inline logo (scope + wordmark, no blip labels) -->
+    <svg viewBox="0 0 220 60" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <radialGradient id="hScopeBg" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#0d2a20"/>
+          <stop offset="100%" stop-color="#061210"/>
+        </radialGradient>
+        <linearGradient id="hSweep" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#00ff88" stop-opacity="0"/>
+          <stop offset="100%" stop-color="#00ff88" stop-opacity="0.55"/>
+        </linearGradient>
+      </defs>
+      <g transform="translate(30,30)">
+        <circle r="28" fill="url(#hScopeBg)" stroke="#1a4a35" stroke-width="1"/>
+        <circle r="9"  fill="none" stroke="#1e5c3a" stroke-width="0.5" opacity="0.7"/>
+        <circle r="18" fill="none" stroke="#1e5c3a" stroke-width="0.5" opacity="0.7"/>
+        <circle r="27" fill="none" stroke="#1e5c3a" stroke-width="0.7" opacity="0.8"/>
+        <line x1="-27" y1="0" x2="27" y2="0" stroke="#1e5c3a" stroke-width="0.5" opacity="0.6"/>
+        <line x1="0" y1="-27" x2="0" y2="27" stroke="#1e5c3a" stroke-width="0.5" opacity="0.6"/>
+        <g style="transform-origin:0 0;animation:spin 6s linear infinite">
+          <path d="M0,0 L0,-28 A28,28 0 0,1 24.2,-14 Z" fill="url(#hSweep)" opacity="0.8"/>
+          <line x1="0" y1="0" x2="0" y2="-28" stroke="#00ff88" stroke-width="1" opacity="0.9"/>
+        </g>
+        <circle r="2" fill="#00ff88"/>
+        <!-- blips -->
+        <circle cx="12"  cy="-18" r="2" fill="#00ff88" opacity="0.6"/>
+        <circle cx="18"  cy="13"  r="2" fill="#00ff88" opacity="0.6"/>
+        <circle cx="-16" cy="14"  r="2" fill="#00ff88" opacity="0.6"/>
+        <circle cx="-14" cy="-17" r="2" fill="#00ff88" opacity="0.6"/>
+      </g>
+      <text x="66" y="28" font-family="Impact,Arial Black,sans-serif" font-size="22" fill="#1e6040" letter-spacing="2">AMMO</text>
+      <text x="66" y="52" font-family="Impact,Arial Black,sans-serif" font-size="22" fill="#f0a800" letter-spacing="2">RADAR</text>
+      <style>@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style>
+    </svg>
+  </div>
+  <nav class="nav">
+    <a href="#prices">Live Prices</a>
+    <a href="#about">About</a>
+    <a href="https://www.practicalpewologist.com">F.I.R.S.T. Journal</a>
+  </nav>
+</header>
+
+<!-- ══ HERO ══ -->
+<section class="hero">
+  <div class="hero-logo">
+    <!-- Full animated logo -->
+    <svg viewBox="0 0 420 200" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <radialGradient id="scopeBg" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#0d2a20"/>
+          <stop offset="100%" stop-color="#061210"/>
+        </radialGradient>
+        <linearGradient id="sweepGrad" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stop-color="#00ff88" stop-opacity="0"/>
+          <stop offset="65%"  stop-color="#00ff88" stop-opacity="0.18"/>
+          <stop offset="100%" stop-color="#00ff88" stop-opacity="0.6"/>
+        </linearGradient>
+        <filter id="blipGlow" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur stdDeviation="2.5" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="labelHalo" x="-12%" y="-30%" width="124%" height="160%">
+          <feMorphology operator="dilate" radius="2" in="SourceAlpha" result="expanded"/>
+          <feFlood flood-color="#040e09" flood-opacity="0.95" result="color"/>
+          <feComposite in="color" in2="expanded" operator="in" result="halo"/>
+          <feMerge><feMergeNode in="halo"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      <g transform="translate(100,100)">
+        <circle r="88" fill="url(#scopeBg)" stroke="#1a4a35" stroke-width="1.5"/>
+        <circle r="22" fill="none" stroke="#1e5c3a" stroke-width="0.7" opacity="0.7"/>
+        <circle r="44" fill="none" stroke="#1e5c3a" stroke-width="0.7" opacity="0.7"/>
+        <circle r="66" fill="none" stroke="#1e5c3a" stroke-width="0.7" opacity="0.7"/>
+        <circle r="86" fill="none" stroke="#1e5c3a" stroke-width="1"   opacity="0.8"/>
+        <line x1="-86" y1="0" x2="86" y2="0" stroke="#1e5c3a" stroke-width="0.6" opacity="0.6"/>
+        <line x1="0" y1="-86" x2="0" y2="86" stroke="#1e5c3a" stroke-width="0.6" opacity="0.6"/>
+        <line x1="-61" y1="-61" x2="61" y2="61" stroke="#1e5c3a" stroke-width="0.4" opacity="0.45"/>
+        <line x1="61" y1="-61" x2="-61" y2="61" stroke="#1e5c3a" stroke-width="0.4" opacity="0.45"/>
+        <g style="transform-origin:0 0;animation:spin 6s linear infinite">
+          <path d="M0,0 L0,-88 A88,88 0 0,1 76.2,-43.9 Z" fill="url(#sweepGrad)" opacity="0.8"/>
+          <line x1="0" y1="0" x2="0" y2="-88" stroke="#00ff88" stroke-width="1.4" opacity="0.9"/>
+        </g>
+        <!-- Blip 1 -->
+        <g transform="translate(38,-55)">
+          <circle r="4.5" fill="#00ff88" filter="url(#blipGlow)" style="animation:bflash 6s 0.58s linear infinite backwards"/>
+          <line x1="0" y1="-5" x2="0" y2="-14" stroke="#00ff88" stroke-width="0.9" style="animation:pr 6s 0.58s linear infinite backwards"/>
+          <g filter="url(#labelHalo)" style="animation:pr 6s 0.58s linear infinite backwards">
+            <text x="0" y="-25" text-anchor="middle" font-family="monospace" font-size="9" fill="#00ff88">38 SPL BRASS</text>
+            <text x="0" y="-13" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#f0a800" font-weight="bold">$0.28 · Grafs</text>
+          </g>
+        </g>
+        <!-- Blip 2 -->
+        <g transform="translate(48,44)">
+          <circle r="4.5" fill="#00ff88" filter="url(#blipGlow)" style="animation:bflash 6s 2.21s linear infinite backwards"/>
+          <line x1="0" y1="5" x2="0" y2="14" stroke="#00ff88" stroke-width="0.9" style="animation:pr 6s 2.21s linear infinite backwards"/>
+          <g filter="url(#labelHalo)" style="animation:pr 6s 2.21s linear infinite backwards">
+            <text x="0" y="27" text-anchor="middle" font-family="monospace" font-size="9" fill="#00ff88">SM PISTOL PRIMER</text>
+            <text x="0" y="39" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#f0a800" font-weight="bold">$0.05 · Midso</text>
+          </g>
+        </g>
+        <!-- Blip 3 -->
+        <g transform="translate(-50,44)">
+          <circle r="4.5" fill="#00ff88" filter="url(#blipGlow)" style="animation:bflash 6s 3.81s linear infinite backwards"/>
+          <line x1="0" y1="5" x2="0" y2="14" stroke="#00ff88" stroke-width="0.9" style="animation:pr 6s 3.81s linear infinite backwards"/>
+          <g filter="url(#labelHalo)" style="animation:pr 6s 3.81s linear infinite backwards">
+            <text x="0" y="27" text-anchor="middle" font-family="monospace" font-size="9" fill="#00ff88">IMR 4895 POWDER</text>
+            <text x="0" y="39" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#f0a800" font-weight="bold">$34.99/lb · LGun</text>
+          </g>
+        </g>
+        <!-- Blip 4 -->
+        <g transform="translate(-44,-55)">
+          <circle r="4.5" fill="#00ff88" filter="url(#blipGlow)" style="animation:bflash 6s 5.36s linear infinite backwards"/>
+          <line x1="0" y1="-5" x2="0" y2="-14" stroke="#00ff88" stroke-width="0.9" style="animation:pr 6s 5.36s linear infinite backwards"/>
+          <g filter="url(#labelHalo)" style="animation:pr 6s 5.36s linear infinite backwards">
+            <text x="0" y="-25" text-anchor="middle" font-family="monospace" font-size="9" fill="#00ff88">.308 FMJ 147GR</text>
+            <text x="0" y="-13" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#f0a800" font-weight="bold">$0.31/ea · eBay</text>
+          </g>
+        </g>
+        <circle r="3.5" fill="#00ff88" opacity="0.95"/>
+        <circle r="1.5" fill="#ffffff" opacity="0.9"/>
+      </g>
+      <text x="208" y="88" font-family="Impact,Arial Black,sans-serif" font-size="54" fill="#1e6040" textLength="196" lengthAdjust="spacingAndGlyphs">AMMO</text>
+      <text x="208" y="145" font-family="Impact,Arial Black,sans-serif" font-size="54" fill="#f0a800" textLength="196" lengthAdjust="spacingAndGlyphs">RADAR</text>
+      <text x="208" y="164" font-family="monospace" font-size="8.5" fill="#3a7a5a" textLength="196" lengthAdjust="spacingAndGlyphs">LIVE AMMO PRICE INTELLIGENCE</text>
+      <style>
+        @keyframes spin   { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+        @keyframes pr     { 0%{opacity:0} 1%{opacity:1} 7%{opacity:.9} 16%{opacity:0} 100%{opacity:0} }
+        @keyframes bflash { 0%{opacity:.2} 1%{opacity:1} 12%{opacity:.4} 18%{opacity:.2} 100%{opacity:.2} }
+      </style>
+    </svg>
+  </div>
+  <h1>Scanning the market. Every day.</h1>
+  <p>Ammo Radar automatically tracks prices across the top reloading suppliers — brass, primers, powder, and projectiles — so you always know where to buy.</p>
+  <a class="cta" href="https://www.practicalpewologist.com">Open F.I.R.S.T. Journal →</a>
+</section>
+
+<!-- ══ LIVE PRICES TABLE ══ -->
+<section class="section" id="prices">
+  <div class="section-title"><span class="dot-pulse"></span>Latest Prices — updated daily</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Component</th>
+        <th>Category</th>
+        <th>Best Price</th>
+        <th>Vendor</th>
+        <th>Signal</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>.38 Special Brass</td>
+        <td><span class="cat-tag">BRASS</span></td>
+        <td class="price-best">$0.28/ea</td>
+        <td><a class="vendor-link" href="https://www.grafs.com" target="_blank">Grafs</a></td>
+        <td class="signal-buy">▲ BUY</td>
+      </tr>
+      <tr>
+        <td>Small Pistol Primer</td>
+        <td><span class="cat-tag">PRIMERS</span></td>
+        <td class="price-best">$0.05/ea</td>
+        <td><a class="vendor-link" href="https://www.midsouthshooterssupply.com" target="_blank">Midsouth</a></td>
+        <td class="signal-buy">▲ BUY</td>
+      </tr>
+      <tr>
+        <td>IMR 4895 Powder</td>
+        <td><span class="cat-tag">POWDER</span></td>
+        <td class="price-mid">$34.99/lb</td>
+        <td><a class="vendor-link" href="https://www.luckygunner.com" target="_blank">Lucky Gunner</a></td>
+        <td class="signal-watch">● WATCH</td>
+      </tr>
+      <tr>
+        <td>.308 FMJ 147gr</td>
+        <td><span class="cat-tag">BULLETS</span></td>
+        <td class="price-best">$0.31/ea</td>
+        <td><a class="vendor-link" href="https://www.ebay.com" target="_blank">eBay</a></td>
+        <td class="signal-buy">▲ BUY</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ══ FEATURE CARDS ══ -->
+<section id="about">
+  <div class="features">
+    <div class="feature-card">
+      <div class="icon">📡</div>
+      <h3>Daily Sweeps</h3>
+      <p>Automated scraper runs every morning across Grafs, Midsouth, Lucky Gunner, Brownells, Rotometals, and more.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🟢</div>
+      <h3>Buy Signals</h3>
+      <p>Price drops below your threshold trigger instant email alerts so you never miss a deal on components you reload.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">📓</div>
+      <h3>F.I.R.S.T. Integration</h3>
+      <p>Price data feeds directly into the F.I.R.S.T. Shooting Journal at practicalpewologist.com — track cost-per-round alongside your range sessions.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🎯</div>
+      <h3>Reloader Focused</h3>
+      <p>Built for the practical shooter who reloads. Tracks brass, primers, powder, and projectiles — not factory ammo fluff.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══ FOOTER ══ -->
+<footer>
+  <span>© 2026 Ammo Radar · <a href="https://www.practicalpewologist.com">The Practical Pewologist</a></span>
+  <span>ammo-radar.com redirects to practicalpewologist.com</span>
+</footer>
+
+</body>
+</html>

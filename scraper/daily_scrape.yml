@@ -1,0 +1,46 @@
+name: Ammo Radar — Daily Price Scrape
+
+on:
+  schedule:
+    - cron: "0 13 * * *"   # 9 AM ET daily
+  workflow_dispatch:        # manual trigger from GitHub UI
+
+jobs:
+  scrape:
+    name: Scrape & Update Prices
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium --with-deps
+
+      - name: Run Ammo Radar scraper
+        env:
+          FIREBASE_CREDENTIALS:  ${{ secrets.FIREBASE_CREDENTIALS }}
+          FIREBASE_PROJECT_ID:   ${{ secrets.FIREBASE_PROJECT_ID }}
+          SMTP_HOST:             ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:             ${{ secrets.SMTP_PORT }}
+          SMTP_USER:             ${{ secrets.SMTP_USER }}
+          SMTP_PASS:             ${{ secrets.SMTP_PASS }}
+          ALERT_EMAIL:           ${{ secrets.ALERT_EMAIL }}
+          EBAY_APP_ID:           ${{ secrets.EBAY_APP_ID }}
+        run: python scraper.py
+
+      - name: Upload scraper log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ammo-radar-scrape-log-${{ github.run_number }}
+          path: scraper.log
+          retention-days: 14
