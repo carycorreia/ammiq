@@ -9,8 +9,11 @@ metals:
     unit: lb
     vendors: [powder_valley, grafs, midsouth, rotometals, ebay]
     search_terms:
-      - "raw lead ingots reloading 25lb"
+      - "raw lead"
       - "pure lead ingots casting"
+    ebay_search_terms:
+      - "lead ingots casting bullet"
+      - "pure lead ingots 25lb"
 
   - id: lyman_2
     name: "Lyman #2 Alloy"
@@ -19,6 +22,9 @@ metals:
     search_terms:
       - "Lyman #2 alloy lead"
       - "lyman 2 casting alloy"
+    ebay_search_terms:
+      - "Lyman 2 alloy lead ingots"
+      - "lyman number 2 casting alloy"
 
   - id: linotype
     name: Linotype
@@ -27,6 +33,9 @@ metals:
     search_terms:
       - "linotype lead alloy casting"
       - "linotype metal reloading"
+    ebay_search_terms:
+      - "linotype lead alloy ingots"
+      - "linotype metal casting"
 
 powders:
   - id: titegroup
