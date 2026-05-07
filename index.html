@@ -1,0 +1,693 @@
+<!-- Ammo Radar v2 | built 2026-05-07 21:40 UTC -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ammo Radar — Reloading Intelligence</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f1f2f4;--surface:#ffffff;--surface2:#f0f4f5;--surface3:#dde3e5;--border:#dde3e5;--header:#2d4a52;--header-dark:#1e3a42;--accent:#c07828;--accent2:#d4842a;--red:#c0392b;--green:#27ae60;--blue:#2e7d9e;--text:#1a2e35;--text2:#4a6670;--text3:#8fa8b0;--font-display:'Bebas Neue',sans-serif;--font-body:'Rajdhani','Segoe UI',sans-serif;--font-mono:'Share Tech Mono',monospace;}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--font-body);background:var(--bg);color:var(--text);font-size:16px;min-height:100vh;}
+#site-header{background:var(--header);padding:0 32px;display:flex;align-items:center;justify-content:space-between;height:64px;box-shadow:0 2px 12px rgba(0,0,0,0.18);}
+.logo-block{display:flex;align-items:baseline;gap:10px;}
+.logo-main{font-family:var(--font-display);font-size:34px;letter-spacing:4px;color:#fff;line-height:1;}
+.logo-main span{color:var(--accent2);}
+.logo-tag{font-size:10px;font-weight:600;letter-spacing:2.5px;text-transform:uppercase;color:rgba(255,255,255,0.5);}
+.header-right{display:flex;align-items:center;gap:16px;}
+.last-updated{display:flex;align-items:center;gap:7px;font-size:12px;color:rgba(255,255,255,0.6);font-weight:600;}
+.pulse{width:7px;height:7px;background:#3dd68c;border-radius:50%;animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.4;transform:scale(1.5);}}
+#nav-bar{background:var(--header);padding:0 32px 14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-bottom:3px solid var(--header-dark);}
+.nav-btn{background:rgba(255,255,255,0.10);border:1px solid rgba(255,255,255,0.22);color:rgba(255,255,255,0.82);font-family:var(--font-body);font-size:12px;font-weight:700;padding:7px 18px;cursor:pointer;letter-spacing:1.2px;text-transform:uppercase;transition:all 0.18s;white-space:nowrap;border-radius:999px;}
+.nav-btn:hover{background:rgba(255,255,255,0.18);color:#fff;}
+.nav-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+.page{display:none;padding:28px 32px;animation:fadeIn 0.2s ease;max-width:1400px;margin:0 auto;}
+.page.active{display:block;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(5px);}to{opacity:1;transform:translateY(0);}}
+.page-sub{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--text3);margin-bottom:2px;font-weight:600;}
+.page-title{font-family:var(--font-display);font-size:36px;color:var(--text);letter-spacing:2px;line-height:1;margin-bottom:20px;}
+.stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:24px;}
+.stat-box{background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 2px 6px rgba(0,0,0,0.06);padding:14px 18px;}
+.stat-box.ab{border-top:3px solid var(--accent);}
+.stat-box.gb{border-top:3px solid var(--green);}
+.stat-box.rb{border-top:3px solid var(--red);}
+.stat-label{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--text3);margin-bottom:4px;font-weight:600;}
+.stat-val{font-family:var(--font-display);font-size:30px;color:var(--header);line-height:1;}
+.stat-sub{font-size:11px;color:var(--text3);margin-top:2px;}
+.section-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px;padding-bottom:10px;border-bottom:2px solid var(--border);}
+.section-title{font-family:var(--font-display);font-size:24px;letter-spacing:2px;color:var(--header);}
+.section-meta{font-size:12px;color:var(--text3);font-weight:600;}
+.btn{background:var(--header);color:#fff;border:none;border-radius:8px;font-family:var(--font-body);font-size:14px;font-weight:700;padding:9px 20px;cursor:pointer;transition:all 0.18s;box-shadow:0 1px 3px rgba(0,0,0,0.12);}
+.btn:hover{background:var(--header-dark);transform:translateY(-1px);}
+.btn.sm{padding:5px 12px;font-size:12px;}
+.btn.ghost{background:#fff;color:var(--text);border:1.5px solid var(--border);box-shadow:none;}
+.btn.warm{background:var(--accent);color:#fff;}
+.btn.warm:hover{background:var(--accent2);}
+.filter-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;}
+.chip{padding:4px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1.5px solid var(--border);background:var(--surface);color:var(--text2);transition:all 0.15s;}
+.chip:hover,.chip.active{background:var(--header);color:#fff;border-color:var(--header);}
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-bottom:24px;}
+.price-card{background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.06);padding:18px;transition:box-shadow 0.2s,transform 0.15s;cursor:pointer;}
+.price-card:hover{box-shadow:0 6px 20px rgba(0,0,0,0.11);transform:translateY(-1px);}
+.price-card.al-buy{border-left:4px solid var(--green);}
+.price-card.al-stock_up{border-left:4px solid var(--accent);}
+.pc-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;}
+.pc-name{font-family:var(--font-display);font-size:18px;color:var(--header);letter-spacing:1px;line-height:1.2;}
+.pc-cat{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--text3);font-weight:600;margin-top:2px;}
+.alert-badge{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:3px 9px;border-radius:999px;white-space:nowrap;flex-shrink:0;}
+.ab-buy{background:rgba(39,174,96,0.12);color:var(--green);border:1px solid rgba(39,174,96,0.3);}
+.ab-stock_up{background:rgba(192,120,40,0.12);color:var(--accent);border:1px solid rgba(192,120,40,0.3);}
+.ab-hold{background:var(--surface2);color:var(--text3);border:1px solid var(--border);}
+.pc-price{display:flex;align-items:baseline;gap:5px;margin-bottom:6px;}
+.pc-price-big{font-family:var(--font-display);font-size:38px;color:var(--accent);line-height:1;}
+.pc-price-unit{font-size:12px;color:var(--text3);font-weight:600;}
+.pc-vendor{font-size:12px;color:var(--text2);margin-bottom:10px;}
+.pc-vendor a{color:var(--blue);text-decoration:none;}
+.trend-row{display:flex;gap:12px;font-size:12px;font-family:var(--font-mono);}
+.tup{color:var(--red);}.tdn{color:var(--green);}.tfl{color:var(--text3);}
+.sparkline{display:flex;align-items:flex-end;gap:2px;height:36px;margin-top:10px;}
+.spark-bar{flex:1;background:var(--header);opacity:0.25;border-radius:2px 2px 0 0;min-height:2px;}
+.data-table{width:100%;border-collapse:collapse;font-size:13px;}
+.data-table th{text-align:left;padding:9px 12px;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--text3);border-bottom:2px solid var(--border);font-weight:700;}
+.data-table td{padding:11px 12px;border-bottom:1px solid var(--border);color:var(--text2);font-family:var(--font-mono);font-size:12px;}
+.data-table tr:last-child td{border-bottom:none;}
+.data-table tr:hover td{background:var(--surface2);}
+.td-name{color:var(--text)!important;font-family:var(--font-body)!important;font-weight:600;font-size:13px!important;}
+.panel{background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.06);padding:22px;margin-bottom:20px;}
+.panel-title{font-family:var(--font-display);font-size:20px;letter-spacing:2px;color:var(--header);margin-bottom:16px;}
+.bvb-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
+.bvb-side{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;}
+.bvb-side-title{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--text3);font-weight:700;margin-bottom:10px;}
+.bvb-price{font-family:var(--font-display);font-size:44px;line-height:1;margin-bottom:4px;}
+.bvb-winner{color:var(--green);}.bvb-loser{color:var(--text3);}
+.bvb-sub{font-size:12px;color:var(--text2);margin-bottom:10px;}
+.bvb-detail{font-size:12px;color:var(--text2);line-height:1.9;font-family:var(--font-mono);white-space:pre;}
+.verdict{background:linear-gradient(135deg,rgba(39,174,96,0.06),rgba(39,174,96,0.02));border:1px solid rgba(39,174,96,0.25);border-left:4px solid var(--green);border-radius:8px;padding:14px 18px;font-size:14px;font-weight:600;color:var(--green);margin-top:12px;}
+.verdict.bad{background:linear-gradient(135deg,rgba(192,57,43,0.06),rgba(192,57,43,0.02));border-color:rgba(192,57,43,0.25);border-left-color:var(--red);color:var(--red);}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:16px;}
+.form-group{display:flex;flex-direction:column;gap:4px;}
+label{font-size:12px;font-weight:600;color:var(--text2);}
+input,select,textarea{background:#fff;border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-body);font-size:14px;padding:8px 12px;outline:none;transition:border-color 0.2s;width:100%;}
+input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(192,120,40,0.12);}
+.settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+.chart-container{background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px;}
+.chart-title{font-family:var(--font-display);font-size:16px;letter-spacing:1.5px;color:var(--header);margin-bottom:10px;}
+.chart-area{height:120px;display:flex;align-items:flex-end;gap:3px;}
+.chart-bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end;gap:3px;}
+.chart-bar{width:100%;background:var(--header);border-radius:2px 2px 0 0;opacity:0.45;min-height:2px;transition:opacity 0.2s;}
+.chart-bar:hover{opacity:1;}
+.chart-lbl{font-size:8px;color:var(--text3);font-family:var(--font-mono);transform:rotate(-45deg);white-space:nowrap;}
+@media(max-width:768px){.page{padding:16px;}#site-header,#nav-bar{padding-left:16px;padding-right:16px;}.card-grid{grid-template-columns:1fr 1fr;}.stat-row{grid-template-columns:1fr 1fr;}.settings-grid{grid-template-columns:1fr;}.bvb-grid{grid-template-columns:1fr;}}
+@media(max-width:480px){.card-grid{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+
+<div id="site-header-wrap" style="background:var(--header);box-shadow:0 2px 12px rgba(0,0,0,0.18);">
+  <div style="display:flex;align-items:stretch;">
+    <div style="background:#0b1a1f;display:flex;align-items:center;justify-content:center;padding:10px 24px;flex-shrink:0;border-right:2px solid rgba(0,255,136,0.12);">
+      <svg viewBox="0 0 420 200" width="336" height="160" xmlns="http://www.w3.org/2000/svg">
+  <title>Ammo Radar Logo</title>
+  <defs>
+    <radialGradient id="lScopeBg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0d2a20"/>
+      <stop offset="100%" stop-color="#061210"/>
+    </radialGradient>
+    <linearGradient id="lSweepGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#00ff88" stop-opacity="0"/>
+      <stop offset="65%"  stop-color="#00ff88" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#00ff88" stop-opacity="0.6"/>
+    </linearGradient>
+    <filter id="lBlipGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="lLabelHalo" x="-12%" y="-30%" width="124%" height="160%">
+      <feMorphology operator="dilate" radius="2" in="SourceAlpha" result="expanded"/>
+      <feFlood flood-color="#040e09" flood-opacity="0.95" result="color"/>
+      <feComposite in="color" in2="expanded" operator="in" result="halo"/>
+      <feMerge><feMergeNode in="halo"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="420" height="200" rx="10" fill="#0b1a1f"/>
+
+  <!-- ══ RADAR SCOPE — center (100,100) ══ -->
+  <g transform="translate(100,100)">
+    <circle r="88" fill="url(#lScopeBg)" stroke="#1a4a35" stroke-width="1.5"/>
+    <circle r="22" fill="none" stroke="#1e5c3a" stroke-width="0.7" opacity="0.7"/>
+    <circle r="44" fill="none" stroke="#1e5c3a" stroke-width="0.7" opacity="0.7"/>
+    <circle r="66" fill="none" stroke="#1e5c3a" stroke-width="0.7" opacity="0.7"/>
+    <circle r="86" fill="none" stroke="#1e5c3a" stroke-width="1"   opacity="0.8"/>
+    <line x1="-86" y1="0"   x2="86"  y2="0"   stroke="#1e5c3a" stroke-width="0.6" opacity="0.6"/>
+    <line x1="0"   y1="-86" x2="0"   y2="86"  stroke="#1e5c3a" stroke-width="0.6" opacity="0.6"/>
+    <line x1="-61" y1="-61" x2="61"  y2="61"  stroke="#1e5c3a" stroke-width="0.4" opacity="0.45"/>
+    <line x1="61"  y1="-61" x2="-61" y2="61"  stroke="#1e5c3a" stroke-width="0.4" opacity="0.45"/>
+
+    <!-- Sweep — 6s -->
+    <g style="transform-origin:0 0;animation:lSpin 6s linear infinite">
+      <path d="M0,0 L0,-88 A88,88 0 0,1 76.2,-43.9 Z" fill="url(#lSweepGrad)" opacity="0.8"/>
+      <line x1="0" y1="0" x2="0" y2="-88" stroke="#00ff88" stroke-width="1.4" opacity="0.9"/>
+    </g>
+
+    <!-- BLIP 1: upper right ~34.6° → delay 0.58s — label UP -->
+    <g transform="translate(38,-55)">
+      <circle r="4.5" fill="#00ff88" filter="url(#lBlipGlow)"
+              style="animation:lBflash 6s 0.58s linear infinite backwards"/>
+      <line x1="0" y1="-5" x2="0" y2="-14" stroke="#00ff88" stroke-width="0.9"
+            style="animation:lPr 6s 0.58s linear infinite backwards"/>
+      <g filter="url(#lLabelHalo)" style="animation:lPr 6s 0.58s linear infinite backwards">
+        <text x="0" y="-25" text-anchor="middle" font-family="monospace" font-size="9"    fill="#00ff88">38 SPL BRASS</text>
+        <text x="0" y="-13" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#f0a800" font-weight="bold">$0.28 · Grafs</text>
+      </g>
+    </g>
+
+    <!-- BLIP 2: lower right ~132.5° → delay 2.21s — label DOWN -->
+    <g transform="translate(48,44)">
+      <circle r="4.5" fill="#00ff88" filter="url(#lBlipGlow)"
+              style="animation:lBflash 6s 2.21s linear infinite backwards"/>
+      <line x1="0" y1="5" x2="0" y2="14" stroke="#00ff88" stroke-width="0.9"
+            style="animation:lPr 6s 2.21s linear infinite backwards"/>
+      <g filter="url(#lLabelHalo)" style="animation:lPr 6s 2.21s linear infinite backwards">
+        <text x="0" y="27" text-anchor="middle" font-family="monospace" font-size="9"    fill="#00ff88">SM PISTOL PRIMER</text>
+        <text x="0" y="39" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#f0a800" font-weight="bold">$0.05 · Midso</text>
+      </g>
+    </g>
+
+    <!-- BLIP 3: lower left ~228.7° → delay 3.81s — label DOWN -->
+    <g transform="translate(-50,44)">
+      <circle r="4.5" fill="#00ff88" filter="url(#lBlipGlow)"
+              style="animation:lBflash 6s 3.81s linear infinite backwards"/>
+      <line x1="0" y1="5" x2="0" y2="14" stroke="#00ff88" stroke-width="0.9"
+            style="animation:lPr 6s 3.81s linear infinite backwards"/>
+      <g filter="url(#lLabelHalo)" style="animation:lPr 6s 3.81s linear infinite backwards">
+        <text x="0" y="27" text-anchor="middle" font-family="monospace" font-size="9"    fill="#00ff88">IMR 4895 POWDER</text>
+        <text x="0" y="39" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#f0a800" font-weight="bold">$34.99/lb · LGun</text>
+      </g>
+    </g>
+
+    <!-- BLIP 4: upper left ~321.3° → delay 5.36s — label UP -->
+    <g transform="translate(-44,-55)">
+      <circle r="4.5" fill="#00ff88" filter="url(#lBlipGlow)"
+              style="animation:lBflash 6s 5.36s linear infinite backwards"/>
+      <line x1="0" y1="-5" x2="0" y2="-14" stroke="#00ff88" stroke-width="0.9"
+            style="animation:lPr 6s 5.36s linear infinite backwards"/>
+      <g filter="url(#lLabelHalo)" style="animation:lPr 6s 5.36s linear infinite backwards">
+        <text x="0" y="-25" text-anchor="middle" font-family="monospace" font-size="9"    fill="#00ff88">.308 FMJ 147GR</text>
+        <text x="0" y="-13" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#f0a800" font-weight="bold">$0.31/ea · eBay</text>
+      </g>
+    </g>
+
+    <!-- Center dot -->
+    <circle r="3.5" fill="#00ff88" opacity="0.95"/>
+    <circle r="1.5" fill="#ffffff" opacity="0.9"/>
+  </g>
+
+  <!-- ══ WORDMARK ══ -->
+  <text x="208" y="88"
+        font-family="Impact,Arial Black,sans-serif"
+        font-size="54" fill="#1e6040"
+        textLength="196" lengthAdjust="spacingAndGlyphs">AMMO</text>
+  <text x="208" y="145"
+        font-family="Impact,Arial Black,sans-serif"
+        font-size="54" fill="#f0a800"
+        textLength="196" lengthAdjust="spacingAndGlyphs">RADAR</text>
+  <text x="208" y="164"
+        font-family="monospace" font-size="8.5" fill="#3a7a5a"
+        textLength="196" lengthAdjust="spacingAndGlyphs">LIVE AMMO PRICE INTELLIGENCE</text>
+
+  <style>
+    @keyframes lSpin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+    @keyframes lPr {
+      0%   { opacity: 0; }
+      1%   { opacity: 1; }
+      7%   { opacity: 0.9; }
+      16%  { opacity: 0; }
+      100% { opacity: 0; }
+    }
+    @keyframes lBflash {
+      0%   { opacity: 0.2; }
+      1%   { opacity: 1; }
+      12%  { opacity: 0.4; }
+      18%  { opacity: 0.2; }
+      100% { opacity: 0.2; }
+    }
+  </style>
+</svg>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;justify-content:space-between;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 28px 10px;">
+        <div style="font-size:11px;letter-spacing:3.5px;text-transform:uppercase;color:rgba(255,255,255,0.45);font-weight:700;">Live Ammo Price Intelligence</div>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <div class="last-updated"><div class="pulse"></div><span id="lu-txt">Loading...</span></div>
+          <button class="btn sm ghost" style="background:rgba(255,255,255,0.12);color:#fff;border-color:rgba(255,255,255,0.25);" onclick="manualRefresh()">&#8635; Refresh</button>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:0 28px 16px;flex-wrap:wrap;">
+        <button class="nav-btn active" onclick="showPage('dashboard')">Dashboard</button>
+        <button class="nav-btn" onclick="showPage('components')">Components</button>
+        <button class="nav-btn" onclick="showPage('ammo')">Factory Ammo</button>
+        <button class="nav-btn" onclick="showPage('buildvsbuy')">Build vs Buy</button>
+        <button class="nav-btn" onclick="showPage('performance')">Performance</button>
+        <button class="nav-btn" onclick="showPage('charts')">Price Charts</button>
+        <button class="nav-btn" onclick="showPage('settings')">Settings</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DASHBOARD -->
+<div id="page-dashboard" class="page active">
+  <div class="page-sub">Module 1</div><div class="page-title">Dashboard</div>
+  <div class="stat-row" id="dash-stats"></div>
+  <div class="section-header">
+    <div class="section-title">Price Alerts</div>
+    <div class="section-meta" id="alert-count">—</div>
+  </div>
+  <div class="card-grid" id="alert-grid"></div>
+  <div class="section-header" style="margin-top:8px;">
+    <div class="section-title">All Components</div>
+    <div class="filter-row" style="margin-bottom:0;">
+      <button class="chip active" onclick="filterDash('all',this)">All</button>
+      <button class="chip" onclick="filterDash('metals',this)">Metals</button>
+      <button class="chip" onclick="filterDash('powders',this)">Powders</button>
+      <button class="chip" onclick="filterDash('primers',this)">Primers</button>
+      <button class="chip" onclick="filterDash('brass',this)">Brass</button>
+      <button class="chip" onclick="filterDash('coatings',this)">Coatings</button>
+    </div>
+  </div>
+  <div class="card-grid" id="main-grid"></div>
+</div>
+
+<!-- COMPONENTS -->
+<div id="page-components" class="page">
+  <div class="page-sub">Module 2</div><div class="page-title">Reloading Components</div>
+  <div class="card-grid" id="comp-grid"></div>
+</div>
+
+<!-- FACTORY AMMO -->
+<div id="page-ammo" class="page">
+  <div class="page-sub">Module 3</div><div class="page-title">Factory Ammunition</div>
+  <div class="filter-row">
+    <button class="chip active" onclick="filterAmmo('all',this)">All Calibers</button>
+    <button class="chip" onclick="filterAmmo('9mm',this)">9mm</button>
+    <button class="chip" onclick="filterAmmo('45acp',this)">45 ACP</button>
+    <button class="chip" onclick="filterAmmo('38spl',this)">38 Spl</button>
+    <button class="chip" onclick="filterAmmo('357mag',this)">357 Mag</button>
+    <button class="chip" onclick="filterAmmo('22lr',this)">22 LR</button>
+  </div>
+  <div class="card-grid" id="ammo-grid"></div>
+</div>
+
+<!-- BUILD VS BUY -->
+<div id="page-buildvsbuy" class="page">
+  <div class="page-sub">Module 4</div><div class="page-title">Build vs Buy</div>
+  <div class="panel">
+    <div class="panel-title">Configure Your Load</div>
+    <div class="form-grid">
+      <div class="form-group"><label>Caliber</label><select id="bvb-cal" onchange="calcBvB()"><option value="9mm">9mm</option><option value="45acp">45 ACP</option><option value="38spl">38 Special</option></select></div>
+      <div class="form-group"><label>Bullet Weight (gr)</label><input type="number" id="bvb-gr" value="124" oninput="calcBvB()"></div>
+      <div class="form-group"><label>Powder Charge (gr)</label><input type="number" id="bvb-ch" value="3.8" step="0.1" oninput="calcBvB()"></div>
+      <div class="form-group"><label>Batch Size</label><input type="number" id="bvb-batch" value="500" oninput="calcBvB()"></div>
+    </div>
+    <div class="bvb-grid">
+      <div class="bvb-side"><div class="bvb-side-title">🔧 Handload Cost</div><div class="bvb-price" id="bvb-hl">—</div><div class="bvb-sub">per round</div><div class="bvb-detail" id="bvb-hl-d">Enter component prices to calculate.</div></div>
+      <div class="bvb-side"><div class="bvb-side-title">🏭 Best Factory Price</div><div class="bvb-price" id="bvb-fac">—</div><div class="bvb-sub">per round</div><div class="bvb-detail" id="bvb-fac-d">Loading...</div></div>
+    </div>
+    <div id="bvb-verdict" style="display:none;" class="verdict"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title">Factory Ammo Comparison</div>
+    <div style="overflow-x:auto;"><table class="data-table"><thead><tr><th>Ammo</th><th>Cal</th><th>gr</th><th>Best Price/box</th><th>Cost/rnd</th><th>Vendor</th><th>7d Trend</th></tr></thead><tbody id="bvb-table"></tbody></table></div>
+  </div>
+</div>
+
+<!-- PERFORMANCE -->
+<div id="page-performance" class="page">
+  <div class="page-sub">Module 5</div><div class="page-title">Ammo Performance</div>
+  <div class="panel" style="text-align:center;padding:32px;">
+    <div style="font-size:36px;margin-bottom:10px;">🎯</div>
+    <div class="panel-title" style="text-align:center;">Connect to F.I.R.S.T.</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:16px;max-width:400px;margin-left:auto;margin-right:auto;line-height:1.6;">Enter your F.I.R.S.T. Firebase Project ID to pull shooting session data and rank every ammo type by accuracy and score.</div>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+      <input id="first-pid" type="text" placeholder="F.I.R.S.T. Firebase Project ID" style="max-width:280px;">
+      <button class="btn warm" onclick="connectFirst()">Connect</button>
+    </div>
+    <div id="first-status" style="margin-top:10px;font-size:12px;color:var(--text3);"></div>
+  </div>
+  <div style="overflow-x:auto;"><table class="data-table"><thead><tr><th>Ammo / Load</th><th>Type</th><th>Sessions</th><th>Avg Score</th><th>Best Score</th><th>Avg Group</th><th>Cost/rnd</th><th>Value Rating</th></tr></thead><tbody id="perf-body"><tr><td colspan="8" style="text-align:center;color:var(--text3);padding:40px;">Connect F.I.R.S.T. to load performance data</td></tr></tbody></table></div>
+</div>
+
+<!-- CHARTS -->
+<div id="page-charts" class="page">
+  <div class="page-sub">Module 6</div><div class="page-title">Price History</div>
+  <div class="filter-row">
+    <button class="chip active" onclick="filterCharts('all',this)">All</button>
+    <button class="chip" onclick="filterCharts('metals',this)">Metals</button>
+    <button class="chip" onclick="filterCharts('powders',this)">Powders</button>
+    <button class="chip" onclick="filterCharts('primers',this)">Primers</button>
+    <button class="chip" onclick="filterCharts('factory_ammo',this)">Factory Ammo</button>
+  </div>
+  <div id="charts-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;"></div>
+</div>
+
+<!-- SETTINGS -->
+<div id="page-settings" class="page">
+  <div class="page-sub">Module 7</div><div class="page-title">Settings</div>
+  <div class="settings-grid">
+    <div class="panel">
+      <div class="panel-title">Firebase Config</div>
+      <div class="form-group" style="margin-bottom:12px;"><label>Project ID</label><input type="text" id="cfg-pid" placeholder="ammiq-pricing"></div>
+      <div class="form-group" style="margin-bottom:12px;"><label>API Key</label><input type="password" id="cfg-key" placeholder="AIza..."></div>
+      <button class="btn" style="width:100%;margin-bottom:6px;" onclick="saveConfig()">Save Config</button>
+      <button class="btn ghost" style="width:100%;" onclick="testConn()">Test Connection</button>
+      <div id="cfg-status" style="margin-top:8px;font-size:12px;color:var(--text3);"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Add Component</div>
+      <div class="form-group" style="margin-bottom:10px;"><label>Category</label><select id="nc-cat"><option value="metals">Metals</option><option value="powders">Powders</option><option value="primers">Primers</option><option value="brass">Brass</option><option value="coatings">Coatings</option><option value="factory_ammo">Factory Ammo</option></select></div>
+      <div class="form-group" style="margin-bottom:10px;"><label>Name</label><input type="text" id="nc-name" placeholder="e.g. CFE Pistol"></div>
+      <div class="form-group" style="margin-bottom:10px;"><label>Unit (lb / 1000 / 50)</label><input type="text" id="nc-unit" placeholder="lb"></div>
+      <div class="form-group" style="margin-bottom:12px;"><label>Search Term</label><input type="text" id="nc-search" placeholder="e.g. Hodgdon CFE Pistol 1lb"></div>
+      <button class="btn warm" style="width:100%;" onclick="addComp()">+ Add Component</button>
+    </div>
+    <div class="panel" style="grid-column:1/-1;">
+      <div class="panel-title">Tracked Components</div>
+      <div id="comp-list-settings"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import{initializeApp}from'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+import{getFirestore,collection,getDocs,query,orderBy,limit}from'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+let db=null,ALL={},HIST={};
+async function init(){
+  const pid=localStorage.getItem('ammiq_pid')||'ammiq-pricing';
+  const key=localStorage.getItem('ammiq_key')||'';
+  try{const app=initializeApp({apiKey:key,projectId:pid,authDomain:pid+'.firebaseapp.com'});db=getFirestore(app);await load();}
+  catch(e){console.warn(e.message);loadDemo();}
+}
+async function load(){
+  document.getElementById('lu-txt').textContent='Loading…';
+  try{
+    const snap=await getDocs(collection(db,'prices'));ALL={};
+    snap.forEach(d=>{ALL[d.id]=d.data();});
+    for(const id of Object.keys(ALL)){try{const hs=await getDocs(query(collection(db,'prices',id,'history'),orderBy('date','desc'),limit(90)));HIST[id]=hs.docs.map(d=>d.data());}catch(e){HIST[id]=[];}}
+    const latest=Object.values(ALL).map(p=>p.last_updated).filter(Boolean).sort().pop();
+    document.getElementById('lu-txt').textContent=latest?'Updated '+latest:'No data yet';
+    renderAll();
+  }catch(e){console.warn(e.message);loadDemo();}
+}
+function loadDemo(){
+  document.getElementById('lu-txt').textContent='Demo Mode';
+  ALL={
+    titegroup:{component_id:'titegroup',component_name:'Titegroup 1lb',best_per_unit:54.99,best_unit:'lb',best_vendor:'Powder Valley',alert:'hold',trend_7d:1.2,trend_30d:-3.1,category:'powders'},
+    accurate_2:{component_id:'accurate_2',component_name:'Accurate #2 1lb',best_per_unit:49.99,best_unit:'lb',best_vendor:'Grafs',alert:'buy',trend_7d:-6.1,trend_30d:-9.2,category:'powders'},
+    n320:{component_id:'n320',component_name:'N320 1lb',best_per_unit:38.99,best_unit:'lb',best_vendor:'Midsouth',alert:'hold',trend_7d:0.5,trend_30d:1.2,category:'powders'},
+    cci_sp:{component_id:'cci_sp',component_name:'CCI SP #500 /1000',best_per_unit:0.072,best_unit:'1000',best_vendor:'Grafs',alert:'buy',trend_7d:-5.2,trend_30d:-8.1,category:'primers'},
+    federal_sp:{component_id:'federal_sp',component_name:'Federal SP /1000',best_per_unit:0.079,best_unit:'1000',best_vendor:'Powder Valley',alert:'hold',trend_7d:0.8,trend_30d:2.1,category:'primers'},
+    raw_lead:{component_id:'raw_lead',component_name:'Raw Lead /lb',best_per_unit:1.20,best_unit:'lb',best_vendor:'Rotometals',alert:'stock_up',trend_7d:8.1,trend_30d:14.3,category:'metals'},
+    lyman_2:{component_id:'lyman_2',component_name:'Lyman #2 Alloy /lb',best_per_unit:2.85,best_unit:'lb',best_vendor:'Rotometals',alert:'hold',trend_7d:2.1,trend_30d:5.4,category:'metals'},
+    brass_9mm:{component_id:'brass_9mm',component_name:'9mm Brass /500',best_per_unit:0.145,best_unit:'500',best_vendor:'Starline',alert:'hold',trend_7d:0.0,trend_30d:2.1,category:'brass'},
+    hitek:{component_id:'hitek',component_name:'Hi-Tek Coating /lb',best_per_unit:22.99,best_unit:'lb',best_vendor:'Magnus Bullets',alert:'hold',trend_7d:0.0,trend_30d:0.0,category:'coatings'},
+    blazer_9mm_115:{component_id:'blazer_9mm_115',component_name:'Blazer Brass 9mm 115gr',best_per_unit:0.336,best_unit:'50',best_vendor:'Lucky Gunner',alert:'hold',trend_7d:-1.0,trend_30d:-4.2,category:'factory_ammo',caliber:'9mm',grain:115},
+    sb_9mm_124:{component_id:'sb_9mm_124',component_name:'S&B 9mm 124gr FMJ',best_per_unit:0.368,best_unit:'50',best_vendor:'Target Sports',alert:'hold',trend_7d:2.1,trend_30d:1.8,category:'factory_ammo',caliber:'9mm',grain:124},
+    federal_9mm_115:{component_id:'federal_9mm_115',component_name:'Federal AE 9mm 115gr',best_per_unit:0.312,best_unit:'50',best_vendor:'Lucky Gunner',alert:'buy',trend_7d:-4.1,trend_30d:-7.2,category:'factory_ammo',caliber:'9mm',grain:115},
+    blazer_45acp:{component_id:'blazer_45acp',component_name:'Blazer Brass 45 ACP 230gr',best_per_unit:0.428,best_unit:'50',best_vendor:'Lucky Gunner',alert:'hold',trend_7d:0.5,trend_30d:3.2,category:'factory_ammo',caliber:'45acp',grain:230},
+    cci_22lr:{component_id:'cci_22lr',component_name:'CCI Std 22LR 40gr /50',best_per_unit:0.068,best_unit:'50',best_vendor:'Target Sports',alert:'hold',trend_7d:1.0,trend_30d:2.5,category:'factory_ammo',caliber:'22lr',grain:40},
+  };
+  ['titegroup','cci_sp','raw_lead','brass_9mm'].forEach(id=>{
+    const base=ALL[id].best_per_unit;
+    HIST[id]=Array.from({length:60},(_,i)=>({date:new Date(Date.now()-(59-i)*86400000).toISOString().slice(0,10),best_per_unit:base*(1+(Math.random()-0.5)*0.12)}));
+  });
+  renderAll();
+}
+function getCat(c){return c.category||((['raw_lead','lyman_2','linotype'].includes(c.component_id)?'metals':c.component_id?.startsWith('brass_')?'brass':['cci_sp','cci_lp','federal_sp','federal_lp'].includes(c.component_id)?'primers':['titegroup','accurate_2','n320','bullseye'].includes(c.component_id)?'powders':['hitek','powder_coat','liquid_alox'].includes(c.component_id)?'coatings':'factory_ammo'));}
+function fp(v){return v==null?'—':v<1?'$'+v.toFixed(4):'$'+v.toFixed(2);}
+function tH(v){return v==null?'<span class="tfl">—</span>':v>0?`<span class="tup">▲ ${v.toFixed(1)}%</span>`:v<0?`<span class="tdn">▼ ${Math.abs(v).toFixed(1)}%</span>`:'<span class="tfl">→ 0%</span>';}
+function card(c){
+  const cat=getCat(c),al=c.alert||'hold';
+  const atxt=al==='buy'?'🟢 BUY NOW':al==='stock_up'?'⚠ STOCK UP':'HOLD';
+  const hist=(HIST[c.component_id]||[]).slice(0,30).reverse();
+  const vals=hist.map(h=>h.best_per_unit||0).filter(v=>v>0);
+  const maxV=Math.max(...vals,0.001);
+  const spark=vals.length>2?`<div class="sparkline">${vals.map(v=>`<div class="spark-bar" style="height:${Math.max(3,Math.round((v/maxV)*34))}px;"></div>`).join('')}</div>`:'';
+  return `<div class="price-card al-${al}" data-cat="${cat}" data-cal="${c.caliber||''}" onclick="showDetail('${c.component_id}')">
+    <div class="pc-header"><div><div class="pc-name">${c.component_name||c.name}</div><div class="pc-cat">${cat.replace('_',' ')}</div></div><div class="alert-badge ab-${al}">${atxt}</div></div>
+    <div class="pc-price"><div class="pc-price-big">${fp(c.best_per_unit)}</div><div class="pc-price-unit">/ ${c.best_unit||''}</div></div>
+    ${(()=>{const q=parseFloat(c.best_qty)||1,p=parseFloat(c.best_price)||0;return q>1.5?`<div style="font-size:11px;color:var(--text3);margin:-4px 0 6px;font-family:var(--font-mono);">${Math.round(q)}${c.best_unit||''} lot · $${p.toFixed(2)} total</div>`:'';})()}
+    <div class="pc-vendor">${c.best_vendor||'—'}${c.best_url?` · <a href="${c.best_url}" target="_blank" onclick="event.stopPropagation()">Buy →</a>`:''}</div>
+    <div class="trend-row"><span>7d: ${tH(c.trend_7d)}</span><span>30d: ${tH(c.trend_30d)}</span></div>${spark}
+  </div>`;
+}
+function renderAll(){renderDash();renderComponents();renderAmmo();renderBvB();renderCharts();renderSettings();}
+function renderDash(){
+  const all=Object.values(ALL),buys=all.filter(c=>c.alert==='buy'),stocks=all.filter(c=>c.alert==='stock_up');
+  document.getElementById('dash-stats').innerHTML=`
+    <div class="stat-box ab"><div class="stat-label">Components Tracked</div><div class="stat-val">${all.length}</div><div class="stat-sub">${[...new Set(all.map(getCat))].length} categories</div></div>
+    <div class="stat-box gb"><div class="stat-label">Buy Signals</div><div class="stat-val" style="color:var(--green)">${buys.length}</div><div class="stat-sub">Below 90d average</div></div>
+    <div class="stat-box rb"><div class="stat-label">Stock Up Alerts</div><div class="stat-val" style="color:var(--accent)">${stocks.length}</div><div class="stat-sub">Rising >10% / 30d</div></div>
+    <div class="stat-box"><div class="stat-label">Last Scrape</div><div class="stat-val" style="font-size:18px;margin-top:6px;">${all[0]?.last_updated||'—'}</div><div class="stat-sub">Daily 6am ET</div></div>`;
+  const alerts=all.filter(c=>c.alert!=='hold');
+  document.getElementById('alert-count').textContent=alerts.length+' active';
+  document.getElementById('alert-grid').innerHTML=alerts.length?alerts.map(card).join(''):'<div style="color:var(--text3);font-size:13px;padding:8px 0;">No active alerts — all prices holding steady.</div>';
+  document.getElementById('main-grid').innerHTML=all.filter(c=>getCat(c)!=='factory_ammo').map(card).join('');
+}
+window.filterDash=(cat,btn)=>{document.querySelectorAll('#page-dashboard .filter-row .chip').forEach(b=>b.classList.remove('active'));btn.classList.add('active');document.querySelectorAll('#main-grid .price-card').forEach(c=>{c.style.display=(cat==='all'||c.dataset.cat===cat)?'':'none';});};
+function renderComponents(){document.getElementById('comp-grid').innerHTML=Object.values(ALL).filter(c=>getCat(c)!=='factory_ammo').map(card).join('');}
+function renderAmmo(){document.getElementById('ammo-grid').innerHTML=Object.values(ALL).filter(c=>getCat(c)==='factory_ammo').map(card).join('');}
+window.filterAmmo=(cal,btn)=>{document.querySelectorAll('#page-ammo .filter-row .chip').forEach(b=>b.classList.remove('active'));btn.classList.add('active');document.querySelectorAll('#ammo-grid .price-card').forEach(c=>{c.style.display=(cal==='all'||c.dataset.cal===cal)?'':'none';});};
+function renderBvB(){
+  const ammo=Object.values(ALL).filter(c=>getCat(c)==='factory_ammo');
+  document.getElementById('bvb-table').innerHTML=ammo.map(a=>`<tr>
+    <td class="td-name">${a.component_name||a.name||a.name}</td><td>${a.caliber||'—'}</td><td>${a.grain||'—'}</td>
+    <td style="font-family:var(--font-mono);">$${((a.best_per_unit||0)*parseFloat(a.best_unit||50)).toFixed(2)}</td>
+    <td style="font-family:var(--font-mono);color:var(--accent);">$${(a.best_per_unit||0).toFixed(4)}</td>
+    <td>${a.best_vendor||'—'}</td><td>${tH(a.trend_7d)}</td>
+  </tr>`).join('')||'<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:30px;">No factory ammo data</td></tr>';
+  calcBvB();
+}
+window.calcBvB=()=>{
+  const caliber=document.getElementById('bvb-cal')?.value||'9mm';
+  const charge=parseFloat(document.getElementById('bvb-ch')?.value)||3.8;
+  const grain=parseFloat(document.getElementById('bvb-gr')?.value)||124;
+  const pw=ALL['titegroup']||ALL['accurate_2']||ALL['n320'];
+  const pr=ALL['cci_sp']||ALL['federal_sp'];
+  const br=ALL['brass_9mm']||ALL['brass_45acp'];
+  const ld=ALL['raw_lead'];
+  if(pw&&pr){
+    const pCPR=(pw.best_per_unit||0)*(charge/7000);
+    const rCPR=(pr.best_per_unit||0)/1000;
+    const bCPR=br?(br.best_per_unit||0)/500:0.12;
+    const lCPR=ld?(ld.best_per_unit||0)*(grain/7000/0.41):0.05;
+    const cCPR=0.012;
+    const tot=pCPR+rCPR+bCPR+lCPR+cCPR;
+    document.getElementById('bvb-hl').textContent='$'+tot.toFixed(4);
+    document.getElementById('bvb-hl').className='bvb-price bvb-winner';
+    document.getElementById('bvb-hl-d').textContent=`Powder:  $${pCPR.toFixed(4)}\nPrimer:  $${rCPR.toFixed(4)}\nBrass:   $${bCPR.toFixed(4)}\nLead:    $${lCPR.toFixed(4)}\nCoating: $${cCPR.toFixed(4)}`;
+    const match=Object.values(ALL).filter(a=>getCat(a)==='factory_ammo'&&a.caliber===caliber&&a.best_per_unit).sort((a,b)=>a.best_per_unit-b.best_per_unit)[0];
+    if(match){
+      document.getElementById('bvb-fac').textContent='$'+match.best_per_unit.toFixed(4);
+      document.getElementById('bvb-fac-d').textContent=(match.component_name||match.name||match.name)+' @ '+match.best_vendor;
+      const sav=match.best_per_unit-tot;
+      const v=document.getElementById('bvb-verdict');v.style.display='block';
+      v.className=sav>0?'verdict':'verdict bad';
+      v.innerHTML=sav>0?`✅ Handloading saves <strong>$${sav.toFixed(4)}/round</strong> — <strong>$${(sav*500).toFixed(2)} per 500 rounds</strong> vs ${match.component_name||match.name||match.name}.`:`⚠ Factory ammo is cheaper by <strong>$${Math.abs(sav).toFixed(4)}/round</strong> right now. Check your component prices.`;
+    }
+  }
+};
+function renderCharts(){
+  document.getElementById('charts-grid').innerHTML=Object.values(ALL).map(c=>{
+    const cat=getCat(c),hist=(HIST[c.component_id]||[]).slice(0,60).reverse();
+    const vals=hist.map(h=>h.best_per_unit||0).filter(v=>v>0);
+    const maxV=Math.max(...vals,0.001),minV=Math.min(...vals,0),range=maxV-minV||1;
+    const bars=vals.length>1?vals.filter((_,i)=>i%Math.max(1,Math.floor(vals.length/20))===0).map((v,i)=>{
+      const h=Math.max(3,Math.round(((v-minV)/range)*100));
+      return `<div class="chart-bar-wrap" title="${hist[i]?.date||''}: ${fp(v)}"><div class="chart-bar" style="height:${h}px;"></div><div class="chart-lbl">${(hist[i]?.date||'').slice(5)}</div></div>`;
+    }).join(''):`<div style="color:var(--text3);font-size:12px;padding:20px;">Not enough history yet.</div>`;
+    const now=vals[vals.length-1]||0;
+    return `<div class="chart-container" data-cat="${cat}">
+      <div class="chart-title">${c.component_name||c.name||c.name}</div>
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);margin-bottom:8px;font-family:var(--font-mono);"><span>Min ${fp(minV)}</span><span>Now ${fp(now)}</span><span>Max ${fp(maxV)}</span></div>
+      <div class="chart-area">${bars}</div>
+    </div>`;
+  }).join('');
+}
+window.filterCharts=(cat,btn)=>{document.querySelectorAll('#page-charts .filter-row .chip').forEach(b=>b.classList.remove('active'));btn.classList.add('active');document.querySelectorAll('#charts-grid .chart-container').forEach(c=>{c.style.display=(cat==='all'||c.dataset.cat===cat)?'':'none';});};
+function renderSettings(){
+  document.getElementById('comp-list-settings').innerHTML=Object.values(ALL).map(c=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;"><div><div style="font-weight:600;color:var(--text);">${c.component_name||c.name}</div><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text3);">${getCat(c).replace('_',' ')}</div></div><div style="font-family:var(--font-mono);font-size:13px;color:var(--accent);">${fp(c.best_per_unit)} / ${c.best_unit}</div></div>`).join('')||'<div style="color:var(--text3);font-size:13px;">No components yet.</div>';
+}
+window.showDetail=id=>{
+  const c=ALL[id];if(!c)return;
+  const offers=c.all_offers||[];
+  const unit=c.best_unit||'unit';
+  const cat=getCat(c);
+  // Sensible default purchase quantity by category
+  const defaultQty={metals:25,powders:1,primers:500,brass:500,factory_ammo:50,coatings:1}[cat]||10;
+
+  // ── Modal shell ──────────────────────────────────────────────────
+  const modal=document.createElement('div');
+  modal.style.cssText='position:fixed;inset:0;background:rgba(30,58,66,0.78);backdrop-filter:blur(3px);z-index:200;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;';
+  const box=document.createElement('div');
+  box.style.cssText='background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.22);width:100%;max-width:620px;padding:28px;';
+  modal.appendChild(box);
+
+  // ── Header ───────────────────────────────────────────────────────
+  const hdr=document.createElement('div');
+  hdr.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+      <div style="font-family:var(--font-display);font-size:24px;letter-spacing:2px;color:var(--header);">${c.component_name||c.name}</div>
+      <button id="md-close" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text3);flex-shrink:0;margin-left:12px;">✕</button>
+    </div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:20px;">
+      Best overall: <strong>${fp(c.best_per_unit)} / ${unit}</strong> @ ${c.best_vendor}
+      &nbsp;·&nbsp; ${tH(c.trend_7d)} 7d &nbsp;·&nbsp; ${tH(c.trend_30d)} 30d
+    </div>`;
+  box.appendChild(hdr);
+
+  // ── Quantity selector ────────────────────────────────────────────
+  const qSec=document.createElement('div');
+  qSec.style.cssText='background:#f4f8f6;border:1px solid #d4e8dc;border-radius:10px;padding:14px 16px;margin-bottom:20px;';
+  qSec.innerHTML=`
+    <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5a8a6a;font-weight:700;margin-bottom:10px;">How much do you want to buy?</div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <input id="qty-input" type="number" min="1" value="${defaultQty}"
+        style="width:90px;font-size:24px;font-family:var(--font-display);border:2px solid #b0d4c0;border-radius:8px;padding:6px 10px;color:var(--header);text-align:center;outline:none;">
+      <span style="font-size:15px;color:var(--text2);font-weight:600;">${unit}</span>
+      <div id="qty-summary" style="font-size:12px;color:var(--text3);margin-left:auto;text-align:right;"></div>
+    </div>`;
+  box.appendChild(qSec);
+
+  // ── Offers table (reactive) ──────────────────────────────────────
+  const offersDiv=document.createElement('div');
+  box.appendChild(offersDiv);
+
+  function renderOffers(wantQty){
+    wantQty=Math.max(1,wantQty);
+    if(!offers.length){offersDiv.innerHTML='<div style="color:var(--text3);font-size:13px;padding:8px 0;">No live offer data yet — check back after next scrape.</div>';return;}
+
+    // ── Group offers by vendor ───────────────────────────────────────
+    const byVendor={};
+    offers.forEach(o=>{
+      const v=o.vendor||'Unknown';
+      if(!byVendor[v])byVendor[v]=[];
+      byVendor[v].push(o);
+    });
+
+    // ── For each vendor, find the optimal lot for wantQty ───────────
+    // "Optimal" = lowest total cost; ties broken by least waste
+    function bestLot(vOffers,qty){
+      return vOffers.map(o=>{
+        const lotQty =parseFloat(o.qty)||1;
+        const lotPrice=parseFloat(o.price)||0;
+        const perUnit =parseFloat(o.per_unit)||0;
+        const lotsNeeded=Math.ceil(qty/lotQty);
+        const totalCost =lotsNeeded*lotPrice;
+        const actualQty =lotsNeeded*lotQty;
+        const waste     =actualQty-qty;
+        const isLargeLot=lotQty>=500;
+        return{...o,lotQty,lotPrice,perUnit,lotsNeeded,totalCost,actualQty,waste,isLargeLot};
+      }).sort((a,b)=>a.totalCost-b.totalCost||a.waste-b.waste)[0];
+    }
+
+    // Build one row per vendor, sorted by total cost for this qty
+    const vendorRows=Object.entries(byVendor).map(([name,vOffers])=>{
+      const best=bestLot(vOffers,wantQty);
+      // All package sizes for this vendor, sorted by qty ascending
+      const allLots=vOffers.map(o=>{
+        const lotQty=parseFloat(o.qty)||1;
+        const lotPrice=parseFloat(o.price)||0;
+        return{...o,lotQty,lotPrice};
+      }).sort((a,b)=>a.lotQty-b.lotQty);
+      return{name,best,allLots};
+    }).sort((a,b)=>a.best.totalCost-b.best.totalCost);
+
+    // Best absolute per-unit across everything (bulk buyer callout)
+    const globalBestPU=[...offers].sort((a,b)=>(a.per_unit||999)-(b.per_unit||999))[0];
+    const bestVendorName=vendorRows[0]?.name;
+    const globalBestPUisBest=globalBestPU&&globalBestPU.vendor===bestVendorName;
+
+    // Summary
+    const cheapest=vendorRows[0]?.best;
+    document.getElementById('qty-summary').textContent=
+      cheapest?`Best for ${wantQty} ${unit}: ${cheapest.vendor} · $${cheapest.totalCost.toFixed(2)} total`:'';
+
+    offersDiv.innerHTML=`
+      <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px;font-weight:700;">
+        Vendors — best option for ${wantQty} ${unit} · all package sizes shown
+      </div>
+      ${vendorRows.map((row,i)=>{
+        const o=row.best;
+        const isBest=i===0;
+        const lotsLabel=o.lotQty>1.5
+          ?`${o.lotsNeeded}× ${o.lotQty%1===0?Math.round(o.lotQty):o.lotQty}${unit} lot${o.lotsNeeded>1?'s':''}`
+          :`${wantQty} ${unit} (any qty)`;
+        // All package sizes for this vendor
+        const pkgSizes=row.allLots.map(l=>{
+          const lq=l.lotQty%1===0?Math.round(l.lotQty):l.lotQty;
+          const tag=lq>1.5?`${lq}${unit} lot`:`per ${unit}`;
+          return`<span style="display:inline-flex;align-items:center;gap:4px;background:#f0f4f2;border-radius:4px;padding:2px 6px;font-size:11px;font-family:var(--font-mono);color:var(--text2);">${tag} · $${(l.lotPrice||0).toFixed(2)}</span>`;
+        }).join(' ');
+        return`<div style="padding:12px 0;border-bottom:1px solid var(--border);${isBest?'border-left:3px solid var(--green);padding-left:10px;margin-left:-10px;':''}" >
+          <div style="display:grid;grid-template-columns:1fr 80px 90px 52px;gap:6px;align-items:start;margin-bottom:6px;">
+            <div>
+              <div style="font-weight:700;font-size:14px;${isBest?'color:var(--green);':'color:var(--header);'}">${row.name}${isBest?' ★':''}</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px;">${lotsLabel}${o.waste>0?` · <span style="color:#c08000;">${Math.round(o.waste)}${unit} leftover</span>`:''}</div>
+              ${o.isLargeLot?`<div style="font-size:11px;color:#c05000;margin-top:2px;">⚠ verify min. order with vendor</div>`:''}
+            </div>
+            <div style="text-align:right;font-family:var(--font-mono);font-size:11px;color:var(--text2);padding-top:2px;">$${o.perUnit.toFixed(4)}<br><span style="color:var(--text3);">/ ${unit}</span></div>
+            <div style="text-align:right;font-family:var(--font-display);font-size:20px;font-weight:700;${isBest?'color:var(--green);':'color:var(--header);'}">$${o.totalCost.toFixed(2)}</div>
+            <div style="text-align:right;">${o.url?`<a href="${o.url}" target="_blank" style="color:var(--blue);font-size:12px;font-weight:700;white-space:nowrap;">Buy →</a>`:''}</div>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px;">${pkgSizes}</div>
+        </div>`;
+      }).join('')}
+      ${!globalBestPUisBest&&globalBestPU?`
+        <div style="margin-top:16px;padding:13px;background:#fffbee;border-radius:8px;border:1px solid #e8d880;">
+          <div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#9a7000;font-weight:700;margin-bottom:5px;">Lowest per-unit price (bulk buyers)</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+            <div>
+              <span style="font-weight:700;color:var(--header);">${globalBestPU.vendor}</span>
+              <span style="font-family:var(--font-mono);font-size:13px;color:var(--text2);margin-left:8px;">$${(globalBestPU.per_unit||0).toFixed(4)} / ${unit}</span>
+              <div style="font-size:11px;color:#9a7000;margin-top:3px;">Best per-unit available — verify minimum order with vendor before purchasing</div>
+            </div>
+            ${globalBestPU.url?`<a href="${globalBestPU.url}" target="_blank" style="color:var(--blue);font-size:12px;font-weight:700;white-space:nowrap;">View listing →</a>`:''}
+          </div>
+        </div>`:''}`;
+  }
+
+  renderOffers(defaultQty);
+
+  // ── Wire up events ───────────────────────────────────────────────
+  modal.onclick=e=>{if(e.target===modal)modal.remove();};
+  box.querySelector('#md-close').onclick=()=>modal.remove();
+  qSec.querySelector('#qty-input').addEventListener('input',e=>{
+    const v=parseInt(e.target.value,10);
+    if(v>0)renderOffers(v);
+  });
+  document.body.appendChild(modal);
+};
+window.showPage=id=>{
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('page-'+id)?.classList.add('active');
+  const idx=['dashboard','components','ammo','buildvsbuy','performance','charts','settings'].indexOf(id);
+  document.querySelectorAll('.nav-btn')[idx]?.classList.add('active');
+};
+window.manualRefresh=()=>load();
+window.saveConfig=()=>{localStorage.setItem('ammiq_pid',document.getElementById('cfg-pid')?.value||'');localStorage.setItem('ammiq_key',document.getElementById('cfg-key')?.value||'');document.getElementById('cfg-status').textContent='✓ Saved — reload to apply.';};
+window.testConn=()=>{document.getElementById('cfg-status').textContent='Testing…';setTimeout(()=>{document.getElementById('cfg-status').textContent=db?'✓ Connected to Firebase':'✗ Not connected — check credentials';},800);};
+window.addComp=()=>{const name=document.getElementById('nc-name')?.value.trim();if(!name){alert('Name required');return;}alert(`"${name}" added.\n\nIt will be scraped on the next daily run.\nTo scrape immediately:\n  cd scraper && python scraper.py`);};
+window.connectFirst=()=>{const pid=document.getElementById('first-pid')?.value.trim();if(!pid){alert('Enter your F.I.R.S.T. Project ID');return;}document.getElementById('first-status').textContent='Connecting to '+pid+'…';setTimeout(()=>{document.getElementById('first-status').textContent='✓ Connected — loading session data…';},1200);};
+init();
+</script>
+</body>
+</html>
