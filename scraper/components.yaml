@@ -4,39 +4,39 @@
 # ─────────────────────────────────────────────────────────────────
 
 metals:
-  # Rotometals + eBay only — Grafs/Midsouth don't stock casting metals.
   - id: raw_lead
     name: Raw Lead
     unit: lb
-    vendors: [rotometals, ebay]
+    vendors: [powder_valley, grafs, midsouth, rotometals, ebay]
     search_terms:
-      - "raw lead"
+      - "raw lead ingots reloading 25lb"
+      - "pure lead ingots casting"
 
   - id: lyman_2
     name: "Lyman #2 Alloy"
     unit: lb
-    vendors: [rotometals, ebay]
+    vendors: [powder_valley, grafs, midsouth, rotometals, ebay]
     search_terms:
-      - "Lyman #2 alloy"
-      - "lyman 2 alloy ingot"
+      - "Lyman #2 alloy lead"
+      - "lyman 2 casting alloy"
 
   - id: linotype
     name: Linotype
     unit: lb
-    vendors: [rotometals, ebay]
+    vendors: [powder_valley, grafs, midsouth, rotometals, ebay]
     search_terms:
-      - "linotype lead alloy"
-      - "linotype metal casting"
+      - "linotype lead alloy casting"
+      - "linotype metal reloading"
 
 powders:
   - id: titegroup
     name: Titegroup
     brand: Hodgdon
     unit: lb
-    vendors: [powder_valley, grafs, midsouth, brownells]
+    vendors: [powder_valley, grafs, midsouth, brownells, lucky_gunner]
     search_terms:
-      - "Hodgdon Titegroup 1lb"
-      - "Titegroup smokeless powder"
+      - "Hodgdon Titegroup 1lb powder"
+      - "Titegroup pistol powder"
 
   - id: accurate_2
     name: "Accurate #2"
@@ -66,13 +66,12 @@ powders:
       - "Bullseye pistol powder"
 
 primers:
-  # Lucky Gunner removed — they only carry factory ammo, not reloading supplies.
   - id: cci_sp
     name: "CCI Small Pistol #500"
     brand: CCI
     size: small_pistol
     unit: "1000"
-    vendors: [powder_valley, grafs, midsouth]
+    vendors: [powder_valley, grafs, midsouth, lucky_gunner, ebay]
     search_terms:
       - "CCI 500 small pistol primers 1000"
       - "CCI SP primers box 1000"
@@ -82,7 +81,7 @@ primers:
     brand: CCI
     size: large_pistol
     unit: "1000"
-    vendors: [powder_valley, grafs, midsouth]
+    vendors: [powder_valley, grafs, midsouth, ebay]
     search_terms:
       - "CCI 300 large pistol primers 1000"
 
@@ -91,7 +90,7 @@ primers:
     brand: Federal
     size: small_pistol
     unit: "1000"
-    vendors: [powder_valley, grafs, midsouth]
+    vendors: [powder_valley, grafs, midsouth, ebay]
     search_terms:
       - "Federal 100 small pistol primers 1000"
 
@@ -100,7 +99,7 @@ primers:
     brand: Federal
     size: large_pistol
     unit: "1000"
-    vendors: [powder_valley, grafs, midsouth]
+    vendors: [powder_valley, grafs, midsouth, ebay]
     search_terms:
       - "Federal 150 large pistol primers 1000"
 
@@ -109,28 +108,28 @@ brass:
     name: "9mm Brass"
     caliber: 9mm
     unit: "500"
-    vendors: [powder_valley, grafs, midsouth, starline]
+    vendors: [powder_valley, grafs, midsouth, starline, ebay]
     search_terms:
-      - "9mm unprimed brass 500"
-      - "9x19 Starline brass 500"
+      - "9mm unprimed brass cases 500"
+      - "9x19 brass Starline 500"
 
   - id: brass_45acp
     name: "45 ACP Brass"
     caliber: 45acp
     unit: "500"
-    vendors: [powder_valley, grafs, midsouth, starline]
+    vendors: [powder_valley, grafs, midsouth, starline, ebay]
     search_terms:
       - "45 ACP unprimed brass 500"
-      - "45 auto Starline brass"
+      - "45 auto brass cases Starline"
 
   - id: brass_38spl
     name: "38 Special Brass"
     caliber: 38spl
     unit: "500"
-    vendors: [powder_valley, grafs, midsouth, starline]
+    vendors: [powder_valley, grafs, midsouth, starline, ebay]
     search_terms:
       - "38 special unprimed brass 500"
-      - "38 spl Starline brass 500"
+      - "38 spl brass Starline 500"
 
 coatings:
   - id: hitek
@@ -138,15 +137,16 @@ coatings:
     unit: lb
     vendors: [magnus_bullets, bayou_bullets]
     search_terms:
-      - "Hi-Tek bullet coating"
-      - "Hi-Tek polymer coating"
+      - "Hi-Tek bullet coating reloading"
+      - "Hi-Tek polymer coating cast bullets"
 
   - id: powder_coat
     name: "Powder Coat (Harbor Freight)"
     unit: lb
-    vendors: [harbor_freight]
+    vendors: [harbor_freight, amazon]
     search_terms:
-      - "powder coat spray gun kit"
+      - "powder coat paint bullet casting"
+      - "eastwood powder coat reloading"
 
   - id: liquid_alox
     name: "Liquid Alox Lube"
@@ -154,7 +154,7 @@ coatings:
     vendors: [powder_valley, grafs, midsouth]
     search_terms:
       - "Lee Liquid Alox bullet lube"
-      - "liquid alox lube"
+      - "liquid alox lube casting"
 
 factory_ammo:
   # 9mm
@@ -166,8 +166,9 @@ factory_ammo:
     type: FMJ
     unit: "50"
     vendors: [lucky_gunner, target_sports, ammoseek]
+    ammoseek_url: "https://ammoseek.com/ammo/9mm-luger?s=ppu&gr=115&type=fmj"
     search_terms:
-      - "Blazer Brass 9mm 115gr FMJ 50"
+      - "Blazer Brass 9mm 115gr FMJ 50 round"
 
   - id: blazer_9mm_124
     name: "Blazer Brass 9mm 124gr FMJ"
@@ -189,7 +190,7 @@ factory_ammo:
     unit: "50"
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
-      - "Sellier Bellot 9mm 115gr 50"
+      - "Sellier Bellot 9mm 115gr 50 round"
 
   - id: sb_9mm_124
     name: "S&B 9mm 124gr FMJ"
@@ -200,7 +201,7 @@ factory_ammo:
     unit: "50"
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
-      - "S&B 9mm 124gr FMJ 50"
+      - "S&B 9mm 124gr FMJ 50 round"
 
   - id: federal_9mm_115
     name: "Federal American Eagle 9mm 115gr"
@@ -257,7 +258,7 @@ factory_ammo:
     search_terms:
       - "Wolf 9mm 115gr FMJ steel case 50"
 
-  # 22 LR
+  # 22 LR (no reloading — track for cost comparison only)
   - id: cci_22lr_std
     name: "CCI Standard 22 LR 40gr"
     caliber: 22lr
@@ -268,7 +269,7 @@ factory_ammo:
     no_reload: true
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
-      - "CCI Standard 22LR 40gr 50"
+      - "CCI Standard 22LR 40gr 50 round"
 
   - id: federal_22lr
     name: "Federal AutoMatch 22 LR"
@@ -280,7 +281,7 @@ factory_ammo:
     no_reload: true
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
-      - "Federal AutoMatch 22LR 325"
+      - "Federal AutoMatch 22LR 325 round"
 
   # 38 Special
   - id: federal_38spl_130
