@@ -181,11 +181,19 @@ def get_qty(component: dict, default: float = 1.0) -> float:
 
 def parse_weight_lbs(text: str) -> float:
     """Extract a weight in lbs from a product title.
-    '25 Lb Pure Lead' → 25.0, '5-lb ingot' → 5.0, '1 pound' → 1.0
+    '25 Lb Pure Lead' → 25.0, '5-lb ingot' → 5.0, '1 pound' → 1.0,
+    '2000 lb (1 Tonne)' → 2000.0, '10oz' → 0.625
     Returns 0.0 if nothing found."""
     text = text.lower()
-    m = re.search(r'([\d]+(?:\.\d+)?)\s*(?:lb|lbs|pound|pounds)', text)
-    return float(m.group(1)) if m else 0.0
+    # lbs/pounds — handle hyphens and spaces: "5-lb", "5 lb", "5lbs"
+    m = re.search(r'([\d,]+(?:\.\d+)?)\s*-?\s*(?:lbs?|pounds?)', text)
+    if m:
+        return float(m.group(1).replace(",", ""))
+    # ounces → convert to lbs
+    m = re.search(r'([\d,]+(?:\.\d+)?)\s*-?\s*oz', text)
+    if m:
+        return round(float(m.group(1).replace(",", "")) / 16, 4)
+    return 0.0
 
 def first_el(card, selectors: list):
     for sel in selectors:
@@ -681,13 +689,20 @@ def scrape_ebay(component):
                 price = float(item.get("price", {}).get("value", 0))
                 if not price:
                     continue
-                qty = get_qty(component)
-                url = item.get("itemWebUrl", "https://www.ebay.com")
+                title = item.get("title", "")
+                unit  = str(component.get("unit", "lb"))
+                url   = item.get("itemWebUrl", "https://www.ebay.com")
+                # Parse lot weight from title so "$12 for 5lb" → $2.40/lb not $12/lb
+                title_weight = parse_weight_lbs(title) if unit == "lb" else 0.0
+                if title_weight >= 0.5:
+                    qty      = title_weight
+                    per_unit = round(price / qty, 6)
+                    log.debug(f"  eBay title weight: '{title}' → {qty}lb @ ${per_unit:.4f}/lb")
+                else:
+                    qty      = get_qty(component)
+                    per_unit = round(price / qty, 6) if qty else price
                 offers.append(PriceOffer(
-                    "eBay", price, qty,
-                    str(component.get("unit", "lb")),
-                    round(price / qty, 6) if qty else price,
-                    url,
+                    "eBay", price, qty, unit, per_unit, url,
                 ))
             if items:
                 log.info(f"  ebay: {len(offers)} offer(s) for '{term}'")
@@ -877,6 +892,28 @@ def compute_trends(db, component_id, current_best):
         log.warning(f"  Trend error for {component_id}: {e}")
     return trends
 
+# ── Build all_offers: up to 20 per vendor, sorted by qty within each vendor ──
+def _build_all_offers(offers):
+    """
+    Store up to 20 offers per vendor so every vendor's full range of
+    package sizes is represented.  Within each vendor, sort by qty (smallest
+    lot first) so the dashboard can walk up through lot sizes.  Final list is
+    sorted by per_unit across all vendors.
+    """
+    from collections import defaultdict
+    by_vendor = defaultdict(list)
+    for o in offers:
+        by_vendor[o.vendor].append(o)
+    stored = []
+    for v_offers in by_vendor.values():
+        # Sort by qty ascending so smallest lots come first per vendor
+        v_sorted = sorted(v_offers, key=lambda o: (o.qty or 0))
+        stored.extend(v_sorted[:20])
+    # Final global sort by per_unit so cheapest-per-unit is first overall
+    stored.sort(key=lambda o: o.per_unit)
+    return [asdict(o) for o in stored]
+
+
 # ── Firebase write ────────────────────────────────────────────────
 def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=False):
     if not offers:
@@ -912,7 +949,7 @@ def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=
         "best_qty":       best.qty,  "best_unit":      best.unit,
         "best_vendor":    best.vendor, "best_url":     best.url,
         "offer_count":    len(offers), "last_updated": TODAY,
-        "all_offers":     [asdict(o) for o in sorted(offers, key=lambda x: x.per_unit)[:25]],
+        "all_offers":     _build_all_offers(offers),
         **trends,
     }
     if dry_run:
