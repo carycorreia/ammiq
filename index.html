@@ -402,7 +402,7 @@ async function load(){
   document.getElementById('lu-txt').textContent='Loading…';
   try{
     const snap=await getDocs(collection(db,'prices'));ALL={};
-    snap.forEach(d=>{ALL[d.id]=d.data();});
+    snap.forEach(d=>{const _d=d.data();if(!_d.component_id)_d.component_id=d.id;ALL[d.id]=_d;});
     for(const id of Object.keys(ALL)){try{const hs=await getDocs(query(collection(db,'prices',id,'history'),orderBy('date','desc'),limit(90)));HIST[id]=hs.docs.map(d=>d.data());}catch(e){HIST[id]=[];}}
     const latest=Object.values(ALL).map(p=>p.last_updated).filter(Boolean).sort().pop();
     document.getElementById('lu-txt').textContent=latest?'Updated '+latest:'No data yet';
