@@ -37,6 +37,7 @@ jobs:
           SMTP_PASS:             ${{ secrets.SMTP_PASS }}
           ALERT_EMAIL:           ${{ secrets.ALERT_EMAIL }}
           EBAY_APP_ID:           ${{ secrets.EBAY_APP_ID }}
+          EBAY_CERT_ID:          ${{ secrets.EBAY_CERT_ID }}
         run: python scraper.py
 
       - name: Upload scraper log
