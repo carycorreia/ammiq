@@ -215,17 +215,17 @@ def fetch_static(url: str) -> Optional[BeautifulSoup]:
         log.warning(f"  Static fetch failed: {e}")
         return None
 
-async def _fetch_js(url: str, wait_selector: str = None, wait_ms: int = 4000):
+async def _fetch_js(url: str, wait_selector: str = None, wait_ms: int = 2500):
     try:
         from playwright.async_api import async_playwright
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             ctx  = await browser.new_context(user_agent=HEADERS["User-Agent"], locale="en-US")
             page = await ctx.new_page()
-            await page.goto(url, timeout=30000)
+            await page.goto(url, timeout=25000)
             if wait_selector:
                 try:
-                    await page.wait_for_selector(wait_selector, timeout=10000)
+                    await page.wait_for_selector(wait_selector, timeout=7000)
                 except Exception:
                     pass
             await page.wait_for_timeout(wait_ms)
@@ -240,7 +240,7 @@ async def _fetch_js(url: str, wait_selector: str = None, wait_ms: int = 4000):
         log.warning(f"  Playwright fetch failed: {e}")
         return None
 
-def fetch_js(url: str, wait_selector: str = None, wait_ms: int = 4000) -> Optional[BeautifulSoup]:
+def fetch_js(url: str, wait_selector: str = None, wait_ms: int = 2500) -> Optional[BeautifulSoup]:
     return asyncio.run(_fetch_js(url, wait_selector, wait_ms))
 
 def price_anchor_offers(soup, vendor_name, component, link_domain,
@@ -658,7 +658,6 @@ def scrape_ebay(component):
     token = _ebay_token_cache["token"]
     if not token:
         return offers
-    # Use ebay_search_terms if defined, otherwise fall back to search_terms
     terms = component.get("ebay_search_terms", component.get("search_terms", []))
     for term in terms[:2]:
         try:
