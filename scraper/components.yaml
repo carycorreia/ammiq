@@ -10,6 +10,8 @@ metals:
     price_ceiling: 8.0        # skip eBay listings > $8/lb (junk data)
     vendors: [rotometals, ebay, midsouth, grafs]
     search_terms:
+      - "lead ingots"
+      - "soft lead ingots"
       - "lead ingots casting bullet"
       - "pure lead ingots reloading"
       - "raw lead ingots casting sinkers"
