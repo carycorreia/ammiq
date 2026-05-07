@@ -215,17 +215,17 @@ def fetch_static(url: str) -> Optional[BeautifulSoup]:
         log.warning(f"  Static fetch failed: {e}")
         return None
 
-async def _fetch_js(url: str, wait_selector: str = None, wait_ms: int = 2500):
+async def _fetch_js(url: str, wait_selector: str = None, wait_ms: int = 4000):
     try:
         from playwright.async_api import async_playwright
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             ctx  = await browser.new_context(user_agent=HEADERS["User-Agent"], locale="en-US")
             page = await ctx.new_page()
-            await page.goto(url, timeout=25000)
+            await page.goto(url, timeout=30000)
             if wait_selector:
                 try:
-                    await page.wait_for_selector(wait_selector, timeout=7000)
+                    await page.wait_for_selector(wait_selector, timeout=10000)
                 except Exception:
                     pass
             await page.wait_for_timeout(wait_ms)
@@ -240,7 +240,7 @@ async def _fetch_js(url: str, wait_selector: str = None, wait_ms: int = 2500):
         log.warning(f"  Playwright fetch failed: {e}")
         return None
 
-def fetch_js(url: str, wait_selector: str = None, wait_ms: int = 2500) -> Optional[BeautifulSoup]:
+def fetch_js(url: str, wait_selector: str = None, wait_ms: int = 4000) -> Optional[BeautifulSoup]:
     return asyncio.run(_fetch_js(url, wait_selector, wait_ms))
 
 def price_anchor_offers(soup, vendor_name, component, link_domain,
@@ -611,90 +611,44 @@ def scrape_rotometals(component):
     return offers
 
 
-# ── eBay Browse API ───────────────────────────────────────────────
-_ebay_token_cache = {"token": None}
-
-def _get_ebay_token():
-    """Exchange App ID + Cert ID for a Client Credentials OAuth token."""
-    import base64
-    app_id  = os.environ.get("EBAY_APP_ID",  "")
-    cert_id = os.environ.get("EBAY_CERT_ID", "")
-    if not app_id or not cert_id:
-        log.info("  eBay: EBAY_APP_ID / EBAY_CERT_ID not set — skipping")
-        return None
-    creds = base64.b64encode(f"{app_id}:{cert_id}".encode()).decode()
-    try:
-        resp = requests.post(
-            "https://api.ebay.com/identity/v1/oauth2/token",
-            headers={
-                "Authorization": f"Basic {creds}",
-                "Content-Type":  "application/x-www-form-urlencoded",
-            },
-            data=(
-                "grant_type=client_credentials"
-                "&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope"
-            ),
-            timeout=10,
-        )
-        resp.raise_for_status()
-        token = resp.json().get("access_token")
-        log.info("  eBay: OAuth token acquired ✓")
-        return token
-    except Exception as e:
-        log.warning(f"  eBay token error: {e}")
-        return None
-
-
 def scrape_ebay(component):
     """
-    eBay Browse API — OAuth Client Credentials, Buy It Now, sorted by price.
-    Uses ebay_search_terms if present (e.g. "lead ingots"), otherwise falls
-    back to search_terms. This lets eBay use buyer-friendly keywords while
-    specialty vendors (Rotometals, Grafs) use their own terminology.
+    eBay — Buy It Now, sorted by price+shipping lowest first.
+    LH_BIN=1, _sop=15, LH_ItemCondition=3 (New only).
     """
     offers = []
-    if _ebay_token_cache["token"] is None:
-        _ebay_token_cache["token"] = _get_ebay_token() or ""
-    token = _ebay_token_cache["token"]
-    if not token:
-        return offers
-    terms = component.get("ebay_search_terms", component.get("search_terms", []))
-    for term in terms[:2]:
-        try:
-            resp = requests.get(
-                "https://api.ebay.com/buy/browse/v1/item_summary/search",
-                headers={
-                    "Authorization":           f"Bearer {token}",
-                    "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
-                    "Content-Type":            "application/json",
-                },
-                params={
-                    "q":      term,
-                    "filter": "buyingOptions:{FIXED_PRICE}",
-                    "sort":   "price",
-                    "limit":  "10",
-                },
-                timeout=TIMEOUT,
-            )
-            resp.raise_for_status()
-            items = resp.json().get("itemSummaries", [])
-            for item in items:
-                price = float(item.get("price", {}).get("value", 0))
-                if not price:
-                    continue
-                qty = get_qty(component)
-                url = item.get("itemWebUrl", "https://www.ebay.com")
-                offers.append(PriceOffer(
-                    "eBay", price, qty,
-                    str(component.get("unit", "lb")),
-                    round(price / qty, 6) if qty else price,
-                    url,
-                ))
-            if items:
-                log.info(f"  ebay: {len(offers)} offer(s)")
-            time.sleep(DELAY)
-        except Exception as e:
-            log.warning(f"  eBay API error for '{term}': {e}")
+    for term in component.get("search_terms", [])[:2]:
+        url = (
+            f"https://www.ebay.com/sch/i.html"
+            f"?_nkw={requests.utils.quote(term)}"
+            f"&LH_BIN=1&_sop=15&LH_ItemCondition=3"
+        )
+        soup = fetch_static(url)
+        if not soup:
+            continue
+        for card in soup.select(".s-item")[:8]:
+            title_el = card.select_one(".s-item__title")
+            price_el = first_el(card, [".s-item__price", ".notranslate"])
+            ship_el  = card.select_one(".s-item__shipping, .s-item__freeXDays")
+            link_el  = card.select_one("a.s-item__link, a[href*='ebay.com/itm']")
+            if title_el and "shop on ebay" in title_el.get_text().lower():
+                continue
+            if not price_el:
+                continue
+            price = parse_price(price_el.get_text().split(" to ")[0])
+            if not price:
+                continue
+            if ship_el and "free" not in ship_el.get_text().lower():
+                ship_cost = parse_price(ship_el.get_text())
+                if ship_cost:
+                    price += ship_cost
+            qty = get_qty(component)
+            offers.append(PriceOffer(
+                "eBay", price, qty,
+                str(component.get("unit", "lb")),
+                round(price / qty, 6) if qty else price,
+                link_el["href"] if link_el else url,
+            ))
     return offers
 
 
@@ -913,7 +867,7 @@ def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=
         "best_qty":       best.qty,  "best_unit":      best.unit,
         "best_vendor":    best.vendor, "best_url":     best.url,
         "offer_count":    len(offers), "last_updated": TODAY,
-        "all_offers":     [asdict(o) for o in sorted(offers, key=lambda x: x.per_unit)[:10]],
+        "all_offers":     [asdict(o) for o in sorted(offers, key=lambda x: x.per_unit)[:25]],
         **trends,
     }
     if dry_run:
