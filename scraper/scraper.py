@@ -180,19 +180,16 @@ def get_qty(component: dict, default: float = 1.0) -> float:
 
 
 def parse_weight_lbs(text: str) -> float:
-    """Extract a weight in lbs from a product title.
-    '25 Lb Pure Lead' → 25.0, '5-lb ingot' → 5.0, '1 pound' → 1.0,
-    '2000 lb (1 Tonne)' → 2000.0, '10oz' → 0.625
+    """Extract weight in lbs from a product title.
+    Handles: '20+ Pounds', '5-lb', '1,000 lbs', '16 oz', '22.5 lb lot'
     Returns 0.0 if nothing found."""
     text = text.lower()
-    # lbs/pounds — handle hyphens and spaces: "5-lb", "5 lb", "5lbs"
-    m = re.search(r'([\d,]+(?:\.\d+)?)\s*-?\s*(?:lbs?|pounds?)', text)
+    m = re.search(r'([\d,]+(?:\.\d+)?)\+?\s*[-]?\s*(?:lbs?|pounds?)', text)
     if m:
-        return float(m.group(1).replace(",", ""))
-    # ounces → convert to lbs
-    m = re.search(r'([\d,]+(?:\.\d+)?)\s*-?\s*oz', text)
+        return float(m.group(1).replace(',', ''))
+    m = re.search(r'([\d,]+(?:\.\d+)?)\+?\s*[-]?\s*oz\b', text)
     if m:
-        return round(float(m.group(1).replace(",", "")) / 16, 4)
+        return round(float(m.group(1).replace(',', '')) / 16, 4)
     return 0.0
 
 def first_el(card, selectors: list):
@@ -619,96 +616,95 @@ def scrape_rotometals(component):
     return offers
 
 
-_ebay_token_cache = {"token": None}
-
-
-def _get_ebay_token():
-    """Fetch eBay OAuth Client Credentials token (Production API)."""
-    import base64
-    app_id  = os.environ.get("EBAY_APP_ID",  "")
+def _ebay_token() -> str:
+    """Get eBay Browse API OAuth token via Client Credentials."""
+    app_id  = os.environ.get("EBAY_APP_ID", "")
     cert_id = os.environ.get("EBAY_CERT_ID", "")
     if not app_id or not cert_id:
-        log.info("  eBay: EBAY_APP_ID / EBAY_CERT_ID not set — skipping")
-        return None
-    creds = base64.b64encode(f"{app_id}:{cert_id}".encode()).decode()
+        return ""
     try:
-        resp = requests.post(
+        import base64
+        creds = base64.b64encode(f"{app_id}:{cert_id}".encode()).decode()
+        r = requests.post(
             "https://api.ebay.com/identity/v1/oauth2/token",
-            headers={
-                "Authorization": f"Basic {creds}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
+            headers={"Authorization": f"Basic {creds}",
+                     "Content-Type": "application/x-www-form-urlencoded"},
             data="grant_type=client_credentials&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope",
-            timeout=10,
+            timeout=15,
         )
-        resp.raise_for_status()
-        token = resp.json().get("access_token")
-        log.info("  eBay: OAuth token acquired ✓")
-        return token
+        return r.json().get("access_token", "")
     except Exception as e:
-        log.warning(f"  eBay token error: {e}")
-        return None
+        logging.warning(f"eBay token error: {e}")
+        return ""
 
+_EBAY_TOKEN = None
 
 def scrape_ebay(component):
-    """
-    eBay — Browse API (Client Credentials OAuth), Buy It Now, sorted by price.
-    Uses EBAY_APP_ID + EBAY_CERT_ID env vars (Production credentials).
-    Falls back silently if credentials are missing.
-    """
-    offers = []
-    # Acquire token once per run
-    if _ebay_token_cache["token"] is None:
-        _ebay_token_cache["token"] = _get_ebay_token() or ""
-    token = _ebay_token_cache["token"]
-    if not token:
-        return offers
+    """eBay Browse API — OAuth, Buy It Now, sorted by price asc."""
+    global _EBAY_TOKEN
+    if _EBAY_TOKEN is None:
+        _EBAY_TOKEN = _ebay_token()
+    if not _EBAY_TOKEN:
+        logging.warning("eBay: no OAuth token — skipping")
+        return []
 
-    # Use ebay_search_terms if present, otherwise fall back to search_terms
-    terms = component.get("ebay_search_terms", component.get("search_terms", []))
-    for term in terms[:2]:
+    offers = []
+    unit   = str(component.get("unit", "lb"))
+
+    for term in component.get("search_terms", [])[:2]:
         try:
-            resp = requests.get(
-                "https://api.ebay.com/buy/browse/v1/item_summary/search",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
-                    "Content-Type": "application/json",
-                },
-                params={
-                    "q": term,
-                    "filter": "buyingOptions:{FIXED_PRICE}",
-                    "sort": "price",
-                    "limit": "10",
-                },
-                timeout=TIMEOUT,
+            url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
+            params = {
+                "q":      term,
+                "filter": "buyingOptions:{FIXED_PRICE},conditions:{NEW|USED_EXCELLENT}",
+                "sort":   "price",
+                "limit":  "25",
+            }
+            r = requests.get(
+                url, params=params,
+                headers={"Authorization": f"Bearer {_EBAY_TOKEN}",
+                         "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+                         "Content-Type": "application/json"},
+                timeout=20,
             )
-            resp.raise_for_status()
-            items = resp.json().get("itemSummaries", [])
+            if r.status_code == 401:
+                _EBAY_TOKEN = _ebay_token()
+                continue
+            if not r.ok:
+                logging.warning(f"eBay API {r.status_code} for '{term}'")
+                continue
+
+            items = r.json().get("itemSummaries", [])
             for item in items:
-                price = float(item.get("price", {}).get("value", 0))
+                title = item.get("title", "")
+                price_info = item.get("price", {})
+                ship_info  = (item.get("shippingOptions") or [{}])[0]
+                price = float(price_info.get("value", 0) or 0)
+                ship  = float((ship_info.get("shippingCost") or {}).get("value", 0) or 0)
+                price += ship
                 if not price:
                     continue
-                title = item.get("title", "")
-                unit  = str(component.get("unit", "lb"))
-                url   = item.get("itemWebUrl", "https://www.ebay.com")
-                # Parse lot weight from title so "$12 for 5lb" → $2.40/lb not $12/lb
-                title_weight = parse_weight_lbs(title) if unit == "lb" else 0.0
-                if title_weight >= 0.5:
-                    qty      = title_weight
+                url_item = item.get("itemWebUrl", "")
+
+                # Parse lot weight from title
+                title_lbs = parse_weight_lbs(title) if unit == "lb" else 0.0
+                if title_lbs >= 0.5:
+                    qty     = title_lbs
                     per_unit = round(price / qty, 6)
-                    log.debug(f"  eBay title weight: '{title}' → {qty}lb @ ${per_unit:.4f}/lb")
                 else:
                     qty      = get_qty(component)
                     per_unit = round(price / qty, 6) if qty else price
+
+                # Sanity check — skip wildly overpriced per-unit
+                ceiling = component.get("price_ceiling", 999)
+                if per_unit > ceiling:
+                    continue
+
                 offers.append(PriceOffer(
-                    "eBay", price, qty, unit, per_unit, url,
+                    "eBay", price, qty, unit, per_unit, url_item
                 ))
-            if items:
-                log.info(f"  ebay: {len(offers)} offer(s) for '{term}'")
-            time.sleep(DELAY)
         except Exception as e:
-            log.warning(f"  eBay API error for '{term}': {e}")
+            logging.warning(f"eBay Browse API error for '{term}': {e}")
     return offers
 
 
@@ -892,28 +888,6 @@ def compute_trends(db, component_id, current_best):
         log.warning(f"  Trend error for {component_id}: {e}")
     return trends
 
-# ── Build all_offers: up to 20 per vendor, sorted by qty within each vendor ──
-def _build_all_offers(offers):
-    """
-    Store up to 20 offers per vendor so every vendor's full range of
-    package sizes is represented.  Within each vendor, sort by qty (smallest
-    lot first) so the dashboard can walk up through lot sizes.  Final list is
-    sorted by per_unit across all vendors.
-    """
-    from collections import defaultdict
-    by_vendor = defaultdict(list)
-    for o in offers:
-        by_vendor[o.vendor].append(o)
-    stored = []
-    for v_offers in by_vendor.values():
-        # Sort by qty ascending so smallest lots come first per vendor
-        v_sorted = sorted(v_offers, key=lambda o: (o.qty or 0))
-        stored.extend(v_sorted[:20])
-    # Final global sort by per_unit so cheapest-per-unit is first overall
-    stored.sort(key=lambda o: o.per_unit)
-    return [asdict(o) for o in stored]
-
-
 # ── Firebase write ────────────────────────────────────────────────
 def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=False):
     if not offers:
@@ -949,7 +923,7 @@ def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=
         "best_qty":       best.qty,  "best_unit":      best.unit,
         "best_vendor":    best.vendor, "best_url":     best.url,
         "offer_count":    len(offers), "last_updated": TODAY,
-        "all_offers":     _build_all_offers(offers),
+        "all_offers":     [asdict(o) for o in sorted(offers, key=lambda x: x.per_unit)[:10]],
         **trends,
     }
     if dry_run:
