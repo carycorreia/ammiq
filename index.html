@@ -107,8 +107,6 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(19
 
 <div id="site-header-wrap" style="background:var(--header);box-shadow:0 2px 12px rgba(0,0,0,0.18);">
   <div style="display:flex;align-items:stretch;">
-
-    <!-- LEFT: Full animated logo -->
     <div style="background:#0b1a1f;display:flex;align-items:center;justify-content:center;padding:10px 24px;flex-shrink:0;border-right:2px solid rgba(0,255,136,0.12);">
       <svg viewBox="0 0 420 200" width="336" height="160" xmlns="http://www.w3.org/2000/svg">
   <title>Ammo Radar Logo</title>
@@ -243,11 +241,7 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(19
   </style>
 </svg>
     </div>
-
-    <!-- RIGHT: Tagline + nav -->
     <div style="flex:1;display:flex;flex-direction:column;justify-content:space-between;">
-
-      <!-- Tagline + controls -->
       <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 28px 10px;">
         <div style="font-size:11px;letter-spacing:3.5px;text-transform:uppercase;color:rgba(255,255,255,0.45);font-weight:700;">Live Ammo Price Intelligence</div>
         <div style="display:flex;align-items:center;gap:14px;">
@@ -255,8 +249,6 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(19
           <button class="btn sm ghost" style="background:rgba(255,255,255,0.12);color:#fff;border-color:rgba(255,255,255,0.25);" onclick="manualRefresh()">&#8635; Refresh</button>
         </div>
       </div>
-
-      <!-- Nav -->
       <div style="display:flex;align-items:center;gap:8px;padding:0 28px 16px;flex-wrap:wrap;">
         <button class="nav-btn active" onclick="showPage('dashboard')">Dashboard</button>
         <button class="nav-btn" onclick="showPage('components')">Components</button>
@@ -266,7 +258,6 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(19
         <button class="nav-btn" onclick="showPage('charts')">Price Charts</button>
         <button class="nav-btn" onclick="showPage('settings')">Settings</button>
       </div>
-
     </div>
   </div>
 </div>
