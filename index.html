@@ -611,7 +611,7 @@ window.showDetail=id=>{
         return{...o,lotQty,lotPrice};
       }).sort((a,b)=>a.lotQty-b.lotQty);
       return{name,best,allLots};
-    }).sort((a,b)=>a.best.totalCost-b.best.totalCost);
+    }).filter(r=>r.best).sort((a,b)=>(a.best.totalCost||0)-(b.best.totalCost||0));
 
     // Best absolute per-unit across everything (bulk buyer callout)
     const globalBestPU=[...offers].sort((a,b)=>(a.per_unit||999)-(b.per_unit||999))[0];
@@ -667,16 +667,18 @@ window.showDetail=id=>{
         </div>`:''}`;
   }
 
-  renderOffers(defaultQty);
-
-  // ── Wire up events ───────────────────────────────────────────────
+  // ── Wire up events + show modal FIRST ──────────────────────────
   modal.onclick=e=>{if(e.target===modal)modal.remove();};
   box.querySelector('#md-close').onclick=()=>modal.remove();
   qSec.querySelector('#qty-input').addEventListener('input',e=>{
     const v=parseInt(e.target.value,10);
-    if(v>0)renderOffers(v);
+    if(v>0)try{renderOffers(v);}catch(err){console.warn('renderOffers error:',err);}
   });
   document.body.appendChild(modal);
+  try{renderOffers(defaultQty);}catch(err){
+    console.warn('renderOffers error:',err);
+    offersDiv.innerHTML='<div style="color:var(--text3);padding:12px 0;">Could not load offers — try refreshing.</div>';
+  }
 };
 window.showPage=id=>{
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
