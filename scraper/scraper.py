@@ -667,66 +667,88 @@ def scrape_ebay(component):
 
     seen_ids: set = set()
     for term in component.get("search_terms", []):
-        try:
-            url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
-            params = {
-                "q":      term,
-                "filter": "buyingOptions:{FIXED_PRICE}",
-                "sort":   "price",
-                "limit":  "50",
-            }
-            r = requests.get(
-                url, params=params,
-                headers={"Authorization": f"Bearer {_EBAY_TOKEN}",
-                         "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
-                         "Content-Type": "application/json"},
-                timeout=20,
-            )
-            if r.status_code == 401:
-                _EBAY_TOKEN = _ebay_token()
-                continue
-            if not r.ok:
-                logging.warning(f"eBay API {r.status_code} for '{term}'")
-                continue
-
-            items = r.json().get("itemSummaries", [])
-            for item in items:
-                # Dedup — same listing can appear across multiple search terms
-                item_id = item.get("itemId", "")
-                if item_id and item_id in seen_ids:
+        offset = 0
+        PAGE   = 200   # eBay API max per request
+        while True:
+            try:
+                url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
+                params = {
+                    "q":      term,
+                    "filter": "buyingOptions:{FIXED_PRICE}",
+                    "sort":   "bestMatch",
+                    "limit":  str(PAGE),
+                    "offset": str(offset),
+                }
+                r = requests.get(
+                    url, params=params,
+                    headers={"Authorization": f"Bearer {_EBAY_TOKEN}",
+                             "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+                             "Content-Type": "application/json"},
+                    timeout=20,
+                )
+                if r.status_code == 401:
+                    _EBAY_TOKEN = _ebay_token()
                     continue
-                if item_id:
-                    seen_ids.add(item_id)
+                if not r.ok:
+                    logging.warning(f"eBay API {r.status_code} for '{term}' offset={offset}")
+                    break
 
-                title = item.get("title", "")
-                price_info = item.get("price", {})
-                ship_info  = (item.get("shippingOptions") or [{}])[0]
-                price = float(price_info.get("value", 0) or 0)
-                ship  = float((ship_info.get("shippingCost") or {}).get("value", 0) or 0)
-                price += ship   # total landed cost
-                if not price:
-                    continue
-                url_item = item.get("itemWebUrl", "")
+                data  = r.json()
+                items = data.get("itemSummaries", [])
+                total = int(data.get("total", 0))
+                if not items:
+                    break
 
-                # Parse lot weight from title
-                title_lbs = parse_weight_lbs(title) if unit == "lb" else 0.0
-                if title_lbs >= 0.5:
-                    qty      = title_lbs
-                    per_unit = round(price / qty, 6)
-                else:
-                    qty      = get_qty(component)
-                    per_unit = round(price / qty, 6) if qty else price
+                for item in items:
+                    # Dedup — same listing can appear across multiple search terms/pages
+                    item_id = item.get("itemId", "")
+                    if item_id and item_id in seen_ids:
+                        continue
+                    if item_id:
+                        seen_ids.add(item_id)
 
-                # Sanity check — skip wildly overpriced per-unit
-                ceiling = component.get("price_ceiling", 999)
-                if per_unit > ceiling:
-                    continue
+                    title = item.get("title", "")
+                    price_info = item.get("price", {})
+                    ship_info  = (item.get("shippingOptions") or [{}])[0]
+                    price = float(price_info.get("value", 0) or 0)
 
-                offers.append(PriceOffer(
-                    "eBay", price, qty, unit, per_unit, url_item
-                ))
-        except Exception as e:
-            logging.warning(f"eBay Browse API error for '{term}': {e}")
+                    # Use volume-discounted price if available ("Save 10% when you buy more")
+                    disc_info  = item.get("discountPricingInfo", {})
+                    disc_price = float((disc_info.get("discountAmount") or {}).get("value", 0) or 0)
+                    if disc_price and disc_price < price:
+                        price = disc_price
+
+                    ship  = float((ship_info.get("shippingCost") or {}).get("value", 0) or 0)
+                    price += ship   # total landed cost
+                    if not price:
+                        continue
+                    url_item = item.get("itemWebUrl", "")
+
+                    # Parse lot weight from title
+                    title_lbs = parse_weight_lbs(title) if unit == "lb" else 0.0
+                    if title_lbs >= 0.5:
+                        qty      = title_lbs
+                        per_unit = round(price / qty, 6)
+                    else:
+                        qty      = get_qty(component)
+                        per_unit = round(price / qty, 6) if qty else price
+
+                    # Sanity check — skip wildly overpriced per-unit
+                    ceiling = component.get("price_ceiling", 999)
+                    if per_unit > ceiling:
+                        continue
+
+                    offers.append(PriceOffer(
+                        "eBay", price, qty, unit, per_unit, url_item
+                    ))
+
+                offset += PAGE
+                if offset >= total:
+                    break   # no more pages
+
+            except Exception as e:
+                logging.warning(f"eBay Browse API error for '{term}' offset={offset}: {e}")
+                break   # stop paginating this term on error
     return offers
 
 
@@ -946,7 +968,7 @@ def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=
         "best_qty":       best.qty,  "best_unit":      best.unit,
         "best_vendor":    best.vendor, "best_url":     best.url,
         "offer_count":    len(offers), "last_updated": TODAY,
-        "all_offers":     [asdict(o) for o in sorted(offers, key=lambda x: x.per_unit)[:10]],
+        "all_offers":     [asdict(o) for o in sorted(offers, key=lambda x: x.per_unit)],
         **trends,
     }
     if dry_run:
