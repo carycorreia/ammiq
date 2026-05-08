@@ -671,7 +671,7 @@ def scrape_ebay(component):
             url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
             params = {
                 "q":      term,
-                "filter": "buyingOptions:{FIXED_PRICE},conditions:{NEW|USED_EXCELLENT}",
+                "filter": "buyingOptions:{FIXED_PRICE}",
                 "sort":   "price",
                 "limit":  "50",
             }
