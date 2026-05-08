@@ -1105,7 +1105,7 @@ def run_scraper():
                 best          = write_to_firebase(
                     db, comp_id, comp_name, category,
                     all_offers, trends, args.dry_run,
-                    component=component,
+                    component=comp,
                 )
                 if best and trends.get("alert") in ("buy", "stock_up") and not args.no_email:
                     alerts.append({
