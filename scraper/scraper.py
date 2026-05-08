@@ -180,17 +180,30 @@ def get_qty(component: dict, default: float = 1.0) -> float:
 
 
 def parse_weight_lbs(text: str) -> float:
-    """Extract weight in lbs from a product title.
-    Handles: '20+ Pounds', '50 + pounds', '5-lb', '1,000 lbs', '16 oz', '22.5 lb lot'
+    """Extract total weight in lbs from a product title.
+    Handles: '20+ Pounds', '50 + pounds', '5-lb', '1,000 lbs', '16 oz',
+             '50-1 pound' (50 x 1 lb = 50 lbs), '25-2lb' (25 x 2 lb = 50 lbs)
     Returns 0.0 if nothing found."""
     text = text.lower()
-    # \s*\+? allows optional whitespace before + (e.g. "50 + pounds")
+
+    # Pattern: "50-1 pound" or "25-2lb" → N x W lb format (count dash weight)
+    m = re.search(r'(\d+)\s*[-x]\s*(\d+(?:\.\d+)?)\s*[-]?\s*(?:lbs?|pounds?)', text)
+    if m:
+        count, weight = float(m.group(1)), float(m.group(2))
+        # Only treat as count×weight if count looks like a quantity (>1) and weight is small
+        if count > 1 and weight <= 50:
+            return count * weight
+
+    # Standard: "36 lb", "50 + pounds", "20+ lbs", "1,000 lbs"
     m = re.search(r'([\d,]+(?:\.\d+)?)\s*\+?\s*[-]?\s*(?:lbs?|pounds?)', text)
     if m:
         return float(m.group(1).replace(',', ''))
+
+    # Ounces
     m = re.search(r'([\d,]+(?:\.\d+)?)\s*\+?\s*[-]?\s*oz\b', text)
     if m:
         return round(float(m.group(1).replace(',', '')) / 16, 4)
+
     return 0.0
 
 def first_el(card, selectors: list):
