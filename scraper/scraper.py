@@ -181,13 +181,14 @@ def get_qty(component: dict, default: float = 1.0) -> float:
 
 def parse_weight_lbs(text: str) -> float:
     """Extract weight in lbs from a product title.
-    Handles: '20+ Pounds', '5-lb', '1,000 lbs', '16 oz', '22.5 lb lot'
+    Handles: '20+ Pounds', '50 + pounds', '5-lb', '1,000 lbs', '16 oz', '22.5 lb lot'
     Returns 0.0 if nothing found."""
     text = text.lower()
-    m = re.search(r'([\d,]+(?:\.\d+)?)\+?\s*[-]?\s*(?:lbs?|pounds?)', text)
+    # \s*\+? allows optional whitespace before + (e.g. "50 + pounds")
+    m = re.search(r'([\d,]+(?:\.\d+)?)\s*\+?\s*[-]?\s*(?:lbs?|pounds?)', text)
     if m:
         return float(m.group(1).replace(',', ''))
-    m = re.search(r'([\d,]+(?:\.\d+)?)\+?\s*[-]?\s*oz\b', text)
+    m = re.search(r'([\d,]+(?:\.\d+)?)\s*\+?\s*[-]?\s*oz\b', text)
     if m:
         return round(float(m.group(1).replace(',', '')) / 16, 4)
     return 0.0
@@ -651,14 +652,15 @@ def scrape_ebay(component):
     offers = []
     unit   = str(component.get("unit", "lb"))
 
-    for term in component.get("search_terms", [])[:2]:
+    seen_ids: set = set()
+    for term in component.get("search_terms", []):
         try:
             url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
             params = {
                 "q":      term,
                 "filter": "buyingOptions:{FIXED_PRICE},conditions:{NEW|USED_EXCELLENT}",
                 "sort":   "price",
-                "limit":  "25",
+                "limit":  "50",
             }
             r = requests.get(
                 url, params=params,
@@ -676,12 +678,19 @@ def scrape_ebay(component):
 
             items = r.json().get("itemSummaries", [])
             for item in items:
+                # Dedup — same listing can appear across multiple search terms
+                item_id = item.get("itemId", "")
+                if item_id and item_id in seen_ids:
+                    continue
+                if item_id:
+                    seen_ids.add(item_id)
+
                 title = item.get("title", "")
                 price_info = item.get("price", {})
                 ship_info  = (item.get("shippingOptions") or [{}])[0]
                 price = float(price_info.get("value", 0) or 0)
                 ship  = float((ship_info.get("shippingCost") or {}).get("value", 0) or 0)
-                price += ship
+                price += ship   # total landed cost
                 if not price:
                     continue
                 url_item = item.get("itemWebUrl", "")
@@ -689,7 +698,7 @@ def scrape_ebay(component):
                 # Parse lot weight from title
                 title_lbs = parse_weight_lbs(title) if unit == "lb" else 0.0
                 if title_lbs >= 0.5:
-                    qty     = title_lbs
+                    qty      = title_lbs
                     per_unit = round(price / qty, 6)
                 else:
                     qty      = get_qty(component)
