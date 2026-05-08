@@ -1,13 +1,18 @@
 # ─────────────────────────────────────────────────────────────────
 # Ammo Radar — Component Tracking Configuration
-# Add any component by adding a new entry. No code changes needed.
+#
+# title_require_any: title must contain at least ONE of these (case-insensitive)
+# title_reject:      title must NOT contain ANY of these (case-insensitive)
+# price_ceiling:     skip listings > this $/unit (junk filter)
+# qty_unit:          "weight" (parse lbs from title) | "count" (parse count from title)
 # ─────────────────────────────────────────────────────────────────
 
 metals:
   - id: raw_lead
     name: Raw Lead
     unit: lb
-    price_ceiling: 8.0        # skip eBay listings > $8/lb (junk data)
+    qty_unit: weight
+    price_ceiling: 8.0
     vendors: [rotometals, ebay, midsouth, grafs]
     search_terms:
       - "lead ingots"
@@ -15,24 +20,111 @@ metals:
       - "lead ingots casting bullet"
       - "pure lead ingots reloading"
       - "raw lead ingots casting sinkers"
+    title_require_any:
+      - "lead ingot"
+      - "lead bar"
+      - "pure lead"
+      - "soft lead"
+      - "range lead"
+      - "range recovered lead"
+      - "raw lead"
+      - "bullet lead"
+      - "casting lead"
+    title_reject:
+      - "alloy"
+      - "antimony"
+      - "linotype"
+      - "lyman"
+      - "wheel weight"
+      - "solder"
+      - "fishing weight kit"
+      - "sinker kit"
+      - "jig"
+      - "bismuth"
+      - "tin"
 
   - id: lyman_2
     name: "Lyman #2 Alloy"
     unit: lb
+    qty_unit: weight
     price_ceiling: 12.0
     vendors: [rotometals, ebay, midsouth, grafs]
     search_terms:
       - "Lyman #2 alloy lead casting"
       - "lyman 2 alloy ingots"
+    title_require_any:
+      - "lyman #2"
+      - "lyman 2"
+      - "lyman no. 2"
+    title_reject:
+      - "mold"
+      - "mould"
+      - "die"
+      - "sizer"
+      - "lubricator"
+      - "book"
 
   - id: linotype
     name: Linotype
     unit: lb
+    qty_unit: weight
     price_ceiling: 15.0
     vendors: [rotometals, ebay, midsouth, grafs]
     search_terms:
       - "linotype lead alloy casting"
       - "linotype metal ingots"
+    title_require_any:
+      - "linotype"
+    title_reject:
+      - "% linotype"        # "2% linotype" = it's an alloy WITH linotype, not pure linotype
+      - "percent linotype"
+      - "linotype mixture"
+      - "with linotype"
+      - "lead mix"
+
+  # ── Lead Alloys (casting alloys with known antimony/tin %) ──────
+  - id: lead_alloy_94_4_2
+    name: "Lead Alloy 94/4/2"
+    description: "94% Pb, 4% Antimony, 2% Tin — BHN ~13"
+    unit: lb
+    qty_unit: weight
+    price_ceiling: 10.0
+    vendors: [rotometals, ebay]
+    search_terms:
+      - "lead alloy 94 4 2 casting ingots"
+      - "bullet casting alloy antimony tin ingots"
+      - "hard lead alloy casting ingots"
+    title_require_any:
+      - "94/4/2"
+      - "94-4-2"
+      - "hard lead alloy"
+      - "bullet casting alloy"
+      - "antimony tin lead"
+    title_reject:
+      - "linotype"
+      - "lyman"
+      - "solder"
+
+  - id: wheel_weights
+    name: "Wheel Weights"
+    description: "Scrap wheel weights — mixed alloy, ~BHN 11-12"
+    unit: lb
+    qty_unit: weight
+    price_ceiling: 6.0
+    vendors: [ebay]
+    search_terms:
+      - "wheel weights lead casting bullets"
+      - "lead wheel weights bullet casting"
+    title_require_any:
+      - "wheel weight"
+      - "wheel weights"
+    title_reject:
+      - "tool"
+      - "balance"
+      - "clip"
+      - "stick-on"
+      - "adhesive"
+
 
 powders:
   - id: titegroup
@@ -43,6 +135,12 @@ powders:
     search_terms:
       - "Hodgdon Titegroup 1lb powder"
       - "Titegroup pistol powder"
+    title_require_any:
+      - "titegroup"
+    title_reject:
+      - "manual"
+      - "book"
+      - "reloading data"
 
   - id: accurate_2
     name: "Accurate #2"
@@ -52,6 +150,14 @@ powders:
     search_terms:
       - "Accurate No2 powder 1lb"
       - "Accurate #2 pistol powder"
+    title_require_any:
+      - "accurate #2"
+      - "accurate no. 2"
+      - "accurate no2"
+      - "accurate 2 powder"
+    title_reject:
+      - "manual"
+      - "book"
 
   - id: n320
     name: N320
@@ -61,6 +167,12 @@ powders:
     search_terms:
       - "Vihtavuori N320 1lb"
       - "N320 pistol powder"
+    title_require_any:
+      - "n320"
+      - "vihtavuori n320"
+    title_reject:
+      - "manual"
+      - "book"
 
   - id: bullseye
     name: Bullseye
@@ -70,6 +182,13 @@ powders:
     search_terms:
       - "Alliant Bullseye powder 1lb"
       - "Bullseye pistol powder"
+    title_require_any:
+      - "bullseye"
+    title_reject:
+      - "manual"
+      - "book"
+      - "target"     # "bullseye target" = paper target not powder
+
 
 primers:
   - id: cci_sp
@@ -77,65 +196,209 @@ primers:
     brand: CCI
     size: small_pistol
     unit: "1000"
+    qty_unit: count
     vendors: [powder_valley, grafs, midsouth, lucky_gunner]
     search_terms:
       - "CCI 500 small pistol primers 1000"
       - "CCI SP primers box 1000"
+    title_require_any:
+      - "cci 500"
+      - "cci small pistol"
+    title_reject:
+      - "large pistol"
+      - "large rifle"
+      - "small rifle"
+      - "magnum"
+      - "tool"
+      - "pocket"
+      - "swager"
+      - "primer tray"
+      - "primer flip"
 
   - id: cci_lp
     name: "CCI Large Pistol #300"
     brand: CCI
     size: large_pistol
     unit: "1000"
+    qty_unit: count
     vendors: [powder_valley, grafs, midsouth]
     search_terms:
       - "CCI 300 large pistol primers 1000"
+    title_require_any:
+      - "cci 300"
+      - "cci large pistol"
+    title_reject:
+      - "small pistol"
+      - "large rifle"
+      - "small rifle"
+      - "magnum"
+      - "tool"
+      - "swager"
+      - "primer tray"
 
   - id: federal_sp
     name: "Federal Small Pistol #100"
     brand: Federal
     size: small_pistol
     unit: "1000"
+    qty_unit: count
     vendors: [powder_valley, grafs, midsouth]
     search_terms:
       - "Federal 100 small pistol primers 1000"
+    title_require_any:
+      - "federal 100"
+      - "federal small pistol"
+      - "federal #100"
+    title_reject:
+      - "large pistol"
+      - "rifle"
+      - "magnum"
+      - "tool"
+      - "swager"
 
   - id: federal_lp
     name: "Federal Large Pistol #150"
     brand: Federal
     size: large_pistol
     unit: "1000"
+    qty_unit: count
     vendors: [powder_valley, grafs, midsouth]
     search_terms:
       - "Federal 150 large pistol primers 1000"
+    title_require_any:
+      - "federal 150"
+      - "federal large pistol"
+      - "federal #150"
+    title_reject:
+      - "small pistol"
+      - "rifle"
+      - "magnum"
+      - "tool"
+      - "swager"
+
 
 brass:
   - id: brass_9mm
     name: "9mm Brass"
     caliber: 9mm
     unit: "500"
+    qty_unit: count
     vendors: [powder_valley, grafs, midsouth, starline]
     search_terms:
-      - "9mm unprimed brass cases 500"
-      - "9x19 brass Starline 500"
+      - "9mm unprimed brass cases"
+      - "9mm brass Starline unprimed"
+      - "9mm brass Lapua unprimed"
+      - "9x19 unprimed brass cases"
+    title_require_any:
+      - "9mm"
+      - "9x19"
+      - "9 mm"
+    title_must_also_contain_any:
+      - "brass"
+      - "case"
+      - "casing"
+    title_reject:
+      - "shell plate"
+      - "shellplate"
+      - "shell holder"
+      - "die"
+      - "gauge"
+      - "go gauge"
+      - "no-go"
+      - "headspace"
+      - "trimmer"
+      - "tumbler"
+      - "media"
+      - "decapper"
+      - "swager"
+      - "primer pocket"
+      - "case mouth"
+      - "expander"
+      - "bullet"
+      - "projectile"
+      - "fmj"
+      - "jhp"
+      - "ammo"
+      - "ammunition"
+      - "loaded"
+      - "round"
+      - "primer"
+      - "powder"
+      - "pistol"       # catches "9mm pistol" (firearm)
+      - "handgun"
+      - "glock"
+      - "magazine"
+      - "mag"
 
   - id: brass_45acp
     name: "45 ACP Brass"
     caliber: 45acp
     unit: "500"
+    qty_unit: count
     vendors: [powder_valley, grafs, midsouth, starline]
     search_terms:
-      - "45 ACP unprimed brass 500"
-      - "45 auto brass cases Starline"
+      - "45 ACP unprimed brass cases"
+      - "45 auto brass Starline unprimed"
+      - "45 ACP brass Lapua unprimed"
+    title_require_any:
+      - "45 acp"
+      - "45acp"
+      - "45 auto"
+      - ".45 acp"
+    title_must_also_contain_any:
+      - "brass"
+      - "case"
+      - "casing"
+    title_reject:
+      - "shell plate"
+      - "shellplate"
+      - "shell holder"
+      - "die"
+      - "gauge"
+      - "trimmer"
+      - "decapper"
+      - "swager"
+      - "bullet"
+      - "projectile"
+      - "ammo"
+      - "ammunition"
+      - "loaded"
+      - "primer"
+      - "pistol"
+      - "handgun"
+      - "magazine"
 
   - id: brass_38spl
     name: "38 Special Brass"
     caliber: 38spl
     unit: "500"
+    qty_unit: count
     vendors: [powder_valley, grafs, midsouth, starline]
     search_terms:
-      - "38 special unprimed brass 500"
-      - "38 spl brass Starline 500"
+      - "38 special unprimed brass cases"
+      - "38 spl brass Starline unprimed"
+      - "38 special brass Lapua unprimed"
+    title_require_any:
+      - "38 special"
+      - "38spl"
+      - "38 spl"
+      - ".38 special"
+    title_must_also_contain_any:
+      - "brass"
+      - "case"
+      - "casing"
+    title_reject:
+      - "shell plate"
+      - "shellplate"
+      - "die"
+      - "gauge"
+      - "trimmer"
+      - "bullet"
+      - "ammo"
+      - "loaded"
+      - "primer"
+      - "revolver"
+
 
 coatings:
   - id: liquid_alox
@@ -145,6 +408,13 @@ coatings:
     search_terms:
       - "Lee Liquid Alox bullet lube"
       - "liquid alox lube casting"
+    title_require_any:
+      - "liquid alox"
+      - "alox lube"
+    title_reject:
+      - "applicator"
+      - "pan"
+
 
 factory_ammo:
   # 9mm
@@ -155,9 +425,16 @@ factory_ammo:
     brand: Blazer
     type: FMJ
     unit: "50"
+    qty_unit: count
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
       - "Blazer Brass 9mm 115gr FMJ 50 round"
+    title_require_any:
+      - "blazer brass"
+      - "blazer 9mm"
+    title_reject:
+      - "brass case"
+      - "unprimed"
 
   - id: blazer_9mm_124
     name: "Blazer Brass 9mm 124gr FMJ"
@@ -166,9 +443,15 @@ factory_ammo:
     brand: Blazer
     type: FMJ
     unit: "50"
+    qty_unit: count
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
       - "Blazer Brass 9mm 124gr FMJ 50"
+    title_require_any:
+      - "blazer"
+    title_reject:
+      - "brass case"
+      - "unprimed"
 
   - id: sb_9mm_115
     name: "S&B 9mm 115gr FMJ"
@@ -177,6 +460,7 @@ factory_ammo:
     brand: "Sellier & Bellot"
     type: FMJ
     unit: "50"
+    qty_unit: count
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
       - "Sellier Bellot 9mm 115gr 50 round"
@@ -188,6 +472,7 @@ factory_ammo:
     brand: "Sellier & Bellot"
     type: FMJ
     unit: "50"
+    qty_unit: count
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
       - "S&B 9mm 124gr FMJ 50 round"
@@ -199,6 +484,7 @@ factory_ammo:
     brand: Federal
     type: FMJ
     unit: "50"
+    qty_unit: count
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
       - "Federal American Eagle 9mm 115gr 50"
@@ -210,6 +496,7 @@ factory_ammo:
     brand: Winchester
     type: FMJ
     unit: "50"
+    qty_unit: count
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
       - "Winchester USA 9mm 115gr FMJ 50"
@@ -221,6 +508,7 @@ factory_ammo:
     brand: Fiocchi
     type: FMJ
     unit: "50"
+    qty_unit: count
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
       - "Fiocchi 9mm 115gr FMJ 50"
@@ -232,6 +520,7 @@ factory_ammo:
     brand: "Sig Sauer"
     type: FMJ
     unit: "50"
+    qty_unit: count
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
       - "Sig Sauer Elite Ball 9mm 124gr 50"
@@ -243,6 +532,7 @@ factory_ammo:
     brand: Wolf
     type: FMJ
     unit: "50"
+    qty_unit: count
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
       - "Wolf 9mm 115gr FMJ steel case 50"
@@ -255,6 +545,7 @@ factory_ammo:
     brand: CCI
     type: LRN
     unit: "50"
+    qty_unit: count
     no_reload: true
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
@@ -267,6 +558,7 @@ factory_ammo:
     brand: Federal
     type: LRN
     unit: "325"
+    qty_unit: count
     no_reload: true
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
@@ -280,6 +572,7 @@ factory_ammo:
     brand: Federal
     type: FMJ
     unit: "50"
+    qty_unit: count
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
       - "Federal 38 Special 130gr FMJ 50"
@@ -291,6 +584,7 @@ factory_ammo:
     brand: Winchester
     type: FMJ
     unit: "50"
+    qty_unit: count
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
       - "Winchester 38 Special 130gr FMJ 50"
@@ -303,6 +597,7 @@ factory_ammo:
     brand: Federal
     type: JSP
     unit: "50"
+    qty_unit: count
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
       - "Federal 357 Magnum 158gr JSP 50"
@@ -315,6 +610,7 @@ factory_ammo:
     brand: Blazer
     type: FMJ
     unit: "50"
+    qty_unit: count
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
       - "Blazer Brass 45 ACP 230gr FMJ 50"
@@ -326,6 +622,7 @@ factory_ammo:
     brand: Federal
     type: FMJ
     unit: "50"
+    qty_unit: count
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
       - "Federal American Eagle 45 ACP 230gr 50"
@@ -337,6 +634,7 @@ factory_ammo:
     brand: Winchester
     type: FMJ
     unit: "50"
+    qty_unit: count
     vendors: [lucky_gunner, target_sports, ammoseek]
     search_terms:
       - "Winchester USA 45 ACP 230gr FMJ 50"

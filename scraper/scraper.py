@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AMMO IQ — Daily Price Harvester v2.5
+AMMO IQ — Daily Price Harvester v2.6
 Playwright + email alerts + dry-run mode.
 
 Usage:
@@ -11,6 +11,11 @@ Usage:
   python scraper.py --no-email            # suppress alert emails
 
 Changelog:
+  v2.6 — Title validation: validate_title() checks title_require_any, title_reject,
+          title_must_also_contain_any from components.yaml for ALL vendors post-fetch.
+          Qty routing: qty_unit:"count" uses parse_count_qty() for brass/primers/projectiles
+          so "500 cases" → qty=500. qty_unit:"weight" keeps parse_weight_lbs() for metals.
+          Both functions applied inline to eBay; applied post-fetch to other vendors.
   v2.5 — Powder Valley: added keyword relevance filter (same as Midsouth).
           Added CATEGORY_MIN_PER_UNIT price floor — powders < $15/lb, primers
           < $0.04/ea, etc. are silently dropped. Fixes $8.99 Bullseye from
@@ -208,6 +213,67 @@ def parse_weight_lbs(text: str) -> float:
         return round(float(m.group(1).replace(',', '')) / 16, 4)
 
     return 0.0
+
+def validate_title(title: str, component: dict) -> bool:
+    """
+    Return True if the product title passes all three filters from components.yaml:
+      1. title_require_any          — title must contain AT LEAST ONE of these strings
+      2. title_reject               — title must NOT contain ANY of these strings
+      3. title_must_also_contain_any — secondary positive gate (e.g. brass must say "brass"/"case")
+    All checks are case-insensitive.
+    Returns True (pass) when a filter list is absent or empty.
+    """
+    t = title.lower()
+
+    # 1. Positive gate
+    require_any = component.get("title_require_any", [])
+    if require_any and not any(r.lower() in t for r in require_any):
+        return False
+
+    # 2. Reject list
+    for bad in component.get("title_reject", []):
+        if bad.lower() in t:
+            return False
+
+    # 3. Secondary positive gate
+    must_also = component.get("title_must_also_contain_any", [])
+    if must_also and not any(m.lower() in t for m in must_also):
+        return False
+
+    return True
+
+
+def parse_count_qty(title: str) -> float:
+    """
+    Extract item COUNT from a product title (brass, primers, projectiles).
+    Handles:
+      "500 cases", "1,000ct", "250 pieces", "100 rounds", "500/box",
+      "1000 count", "box of 100", "500pk", "250-count", "1k rounds"
+    Returns 0.0 if nothing found.
+    """
+    t = title.lower()
+
+    # "box of N" / "pack of N" / "bag of N"
+    m = re.search(r'(?:box|pack|bag)\s+of\s+([\d,]+)', t)
+    if m:
+        return float(m.group(1).replace(',', ''))
+
+    # "N count", "N ct", "N/box", "N pieces", "N rounds", "N cases", "N casings", "N pk"
+    m = re.search(
+        r'([\d,]+)\s*[-/]?\s*'
+        r'(?:count\b|ct\b|pieces?\b|pcs?\b|rounds?\b|cases?\b|casings?\b|pk\b|pack\b)',
+        t,
+    )
+    if m:
+        return float(m.group(1).replace(',', ''))
+
+    # "Nk" shorthand: "1k rounds" → 1000, "2k" → 2000
+    m = re.search(r'(\d+(?:\.\d+)?)\s*k\b', t)
+    if m:
+        return float(m.group(1)) * 1000
+
+    return 0.0
+
 
 def first_el(card, selectors: list):
     for sel in selectors:
@@ -629,6 +695,7 @@ def scrape_rotometals(component):
                 "Rotometals", price, qty,
                 str(component.get("unit", "lb")),
                 round(price / qty, 6) if qty else price, href,
+                title=title_text,
             ))
     return offers
 
@@ -716,6 +783,11 @@ def scrape_ebay(component):
                     list_price = float(price_info.get("value", 0) or 0)
                     price      = list_price
 
+                    # Title validation — skip gauges, shell plates, accessories, etc.
+                    if not validate_title(title, component):
+                        logging.debug(f"eBay title rejected: {title[:80]}")
+                        continue
+
                     # Volume discount ("Save X% when you buy more")
                     disc_info  = item.get("discountPricingInfo", {})
                     disc_pct   = float((disc_info.get("discountPercentage") or 0) or 0)
@@ -729,14 +801,24 @@ def scrape_ebay(component):
                         continue
                     url_item = item.get("itemWebUrl", "")
 
-                    # Parse lot weight from title
-                    title_lbs = parse_weight_lbs(title) if unit == "lb" else 0.0
-                    if title_lbs >= 0.5:
-                        qty      = title_lbs
-                        per_unit = round(price / qty, 6)
+                    # Route qty parsing by qty_unit field
+                    qty_unit_field = component.get("qty_unit", "weight")
+                    if qty_unit_field == "count":
+                        # Brass, primers, projectiles — parse item count from title
+                        parsed_qty = parse_count_qty(title)
+                        if parsed_qty >= 1:
+                            qty = parsed_qty
+                        else:
+                            qty = get_qty(component)
                     else:
-                        qty      = get_qty(component)
-                        per_unit = round(price / qty, 6) if qty else price
+                        # Metals and powders — parse lot weight from title
+                        title_lbs = parse_weight_lbs(title)
+                        if title_lbs >= 0.5:
+                            qty = title_lbs
+                        else:
+                            qty = get_qty(component)
+
+                    per_unit = round(price / qty, 6) if qty else price
 
                     # Sanity check — skip wildly overpriced per-unit
                     ceiling = component.get("price_ceiling", 999)
@@ -773,13 +855,21 @@ def scrape_starline(component):
             ])
             link_el  = card.select_one("a[href*='/brass/'], a[href*='/products/'], a[href]")
             stock_el = card.select_one(".stock, .in-stock, .out-of-stock, .availability")
+            title_el = card.select_one(".product-title, h2, h3, .woocommerce-loop-product__title, a[aria-label]")
             if not price_el:
                 continue
-            price    = parse_price(price_el.get_text())
+            price      = parse_price(price_el.get_text())
             if not price:
                 continue
-            in_stock = "out" not in (stock_el.get_text().lower() if stock_el else "in")
-            qty      = get_qty(component, 500.0)
+            title_text = title_el.get_text(strip=True) if title_el else ""
+            in_stock   = "out" not in (stock_el.get_text().lower() if stock_el else "in")
+            # For brass/primers use count qty from title if available
+            qty_unit_field = component.get("qty_unit", "weight")
+            if qty_unit_field == "count":
+                parsed_count = parse_count_qty(title_text)
+                qty = parsed_count if parsed_count >= 1 else get_qty(component, 500.0)
+            else:
+                qty = get_qty(component, 500.0)
             href     = link_el["href"] if link_el else url
             if href.startswith("/"):
                 href = "https://www.starlinebrass.com" + href
@@ -787,6 +877,7 @@ def scrape_starline(component):
                 "Starline", price, qty,
                 str(component.get("unit", "500")),
                 round(price / qty, 6) if qty else price, href, in_stock,
+                title=title_text,
             ))
     return offers
 
@@ -1067,7 +1158,7 @@ def run_scraper():
         log.setLevel(logging.DEBUG)
 
     log.info("=" * 60)
-    log.info(f"AMMO IQ Scraper v2.5 — {TODAY}")
+    log.info(f"AMMO IQ Scraper v2.6 — {TODAY}")
     if args.dry_run:
         log.info("*** DRY RUN — Firebase will NOT be written ***")
     log.info("=" * 60)
@@ -1117,6 +1208,16 @@ def run_scraper():
                     continue
                 try:
                     found = fn(comp)
+                    # Apply title validation post-fetch for all vendors.
+                    # eBay already validates inline; other scrapers benefit from
+                    # the same title_require_any / title_reject / title_must_also_contain_any
+                    # rules defined in components.yaml.
+                    if found and comp.get("title_require_any") or comp.get("title_reject") or comp.get("title_must_also_contain_any"):
+                        before = len(found)
+                        found  = [o for o in found if validate_title(o.title or o.url, comp)]
+                        after  = len(found)
+                        if before != after:
+                            log.debug(f"  {vk}: title filter dropped {before - after} offer(s)")
                     if found:
                         log.info(f"  {vk}: {len(found)} offer(s)")
                     all_offers.extend(found)

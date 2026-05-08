@@ -100,6 +100,14 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(19
 .chart-bar{width:100%;background:var(--header);border-radius:2px 2px 0 0;opacity:0.45;min-height:2px;transition:opacity 0.2s;}
 .chart-bar:hover{opacity:1;}
 .chart-lbl{font-size:8px;color:var(--text3);font-family:var(--font-mono);transform:rotate(-45deg);white-space:nowrap;}
+.ab-target{background:rgba(39,174,96,0.18);color:#20d070;border:1px solid rgba(39,174,96,0.45);}
+.alert-threshold-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;gap:10px;}
+.alert-threshold-row:last-child{border-bottom:none;}
+.inv-pl-pos{color:var(--green);font-weight:700;}
+.inv-pl-neg{color:var(--red);font-weight:700;}
+.pc-alert-bell{position:absolute;top:8px;right:8px;background:none;border:none;cursor:pointer;font-size:14px;opacity:0.4;transition:opacity 0.2s;}
+.pc-alert-bell:hover,.pc-alert-bell.active{opacity:1;}
+.price-card{position:relative;}
 @media(max-width:768px){.page{padding:16px;}#site-header,#nav-bar{padding-left:16px;padding-right:16px;}.card-grid{grid-template-columns:1fr 1fr;}.stat-row{grid-template-columns:1fr 1fr;}.settings-grid{grid-template-columns:1fr;}.bvb-grid{grid-template-columns:1fr;}}
 @media(max-width:480px){.card-grid{grid-template-columns:1fr;}}
 </style>
@@ -257,6 +265,8 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(19
         <button class="nav-btn" onclick="showPage('buildvsbuy')">Build vs Buy</button>
         <button class="nav-btn" onclick="showPage('performance')">Performance</button>
         <button class="nav-btn" onclick="showPage('charts')">Price Charts</button>
+        <button class="nav-btn" onclick="showPage('inventory')">🏭 Inventory</button>
+        <button class="nav-btn" onclick="showPage('alerts')">🔔 Alerts</button>
         <button class="nav-btn" onclick="showPage('settings')">Settings</button>
       </div>
     </div>
@@ -385,6 +395,55 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(19
   </div>
 </div>
 
+<!-- INVENTORY -->
+<div id="page-inventory" class="page">
+  <div class="page-sub">Module 8</div><div class="page-title">Warehouse Inventory</div>
+  <div class="stat-row" id="inv-stats"></div>
+  <div class="panel">
+    <div class="panel-title">Add / Update Holding</div>
+    <div class="form-grid">
+      <div class="form-group"><label>Component</label><select id="inv-comp" style="font-size:13px;"></select></div>
+      <div class="form-group"><label>Qty On Hand</label><input type="number" id="inv-qty" placeholder="e.g. 25" min="0" step="any"></div>
+      <div class="form-group"><label>Price Paid ($/unit)</label><input type="number" id="inv-paid" placeholder="e.g. 1.75" step="0.0001" min="0"></div>
+    </div>
+    <button class="btn warm" onclick="addInventory()">+ Add to Inventory</button>
+  </div>
+  <div class="panel">
+    <div class="panel-title">Current Holdings</div>
+    <div style="overflow-x:auto;"><table class="data-table">
+      <thead><tr>
+        <th>Component</th><th>Unit</th><th style="text-align:right;">Qty</th>
+        <th style="text-align:right;">Paid $/unit</th><th style="text-align:right;">Market $/unit</th>
+        <th style="text-align:right;">Total Cost</th><th style="text-align:right;">Market Value</th>
+        <th style="text-align:right;">P&amp;L</th><th></th>
+      </tr></thead>
+      <tbody id="inv-table"><tr><td colspan="9" style="text-align:center;color:var(--text3);padding:30px;">No inventory tracked yet.</td></tr></tbody>
+    </table></div>
+  </div>
+</div>
+
+<!-- ALERTS -->
+<div id="page-alerts" class="page">
+  <div class="page-sub">Module 9</div><div class="page-title">Price Alert Thresholds</div>
+  <p style="font-size:13px;color:var(--text2);margin-bottom:20px;max-width:520px;line-height:1.7;">Set a buy-below target for any component. When the scraped price drops under your threshold, the dashboard card shows a <strong style="color:var(--green);">TARGET HIT</strong> badge and the component appears in the triggered list below.</p>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;" class="settings-grid">
+    <div class="panel">
+      <div class="panel-title">Set Alert</div>
+      <div class="form-group" style="margin-bottom:12px;"><label>Component</label><select id="alrt-comp" style="font-size:13px;"></select></div>
+      <div class="form-group" style="margin-bottom:16px;"><label>Alert when price drops below ($/unit)</label><input type="number" id="alrt-thresh" placeholder="e.g. 1.50" step="0.0001" min="0"></div>
+      <button class="btn warm" style="width:100%;" onclick="saveAlertThreshold()">Set Alert</button>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Active Thresholds</div>
+      <div id="alrt-table"><div style="color:var(--text3);font-size:13px;">No thresholds set yet.</div></div>
+    </div>
+    <div class="panel" style="grid-column:1/-1;">
+      <div class="panel-title" style="color:var(--green);">🔔 Thresholds Currently Hit</div>
+      <div id="alrt-triggered"><div style="color:var(--text3);font-size:13px;">None yet — prices are above your thresholds.</div></div>
+    </div>
+  </div>
+</div>
+
 <script type="module">
 import{initializeApp}from'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
 import{getFirestore,collection,getDocs,query,orderBy,limit}from'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
@@ -443,15 +502,23 @@ function card(c){
   const vals=hist.map(h=>h.best_per_unit||0).filter(v=>v>0);
   const maxV=Math.max(...vals,0.001);
   const spark=vals.length>2?`<div class="sparkline">${vals.map(v=>`<div class="spark-bar" style="height:${Math.max(3,Math.round((v/maxV)*34))}px;"></div>`).join('')}</div>`:'';
+  // Price alert threshold check
+  const thresholds=JSON.parse(localStorage.getItem('ammiq_alert_thresholds')||'{}');
+  const thresh=thresholds[c.component_id];
+  const belowTarget=thresh&&c.best_per_unit&&c.best_per_unit<=thresh;
+  const targetBadge=belowTarget?`<div style="display:inline-block;background:rgba(39,174,96,0.18);color:#20d070;border:1px solid rgba(39,174,96,0.45);font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:2px 7px;border-radius:999px;margin-bottom:5px;">🔔 TARGET HIT · &lt;$${thresh.toFixed(4)}</div>`:'';
+  const bellActive=thresh?'active':'';
   return `<div class="price-card al-${al}" data-cat="${cat}" data-cal="${c.caliber||''}" onclick="showDetail('${c.component_id}')">
+    <button class="pc-alert-bell ${bellActive}" title="${thresh?'Alert set: $'+thresh.toFixed(4)+'/'+c.best_unit:'Set price alert'}" onclick="event.stopPropagation();quickSetAlert('${c.component_id}','${c.component_name||c.name||''}','${c.best_unit||'unit'}')">${thresh?'🔔':'🔕'}</button>
     <div class="pc-header"><div><div class="pc-name">${c.component_name||c.name}</div><div class="pc-cat">${cat.replace('_',' ')}</div></div><div class="alert-badge ab-${al}">${atxt}</div></div>
+    ${targetBadge}
     <div class="pc-price"><div class="pc-price-big">${fp(c.best_per_unit)}</div><div class="pc-price-unit">/ ${c.best_unit||''}</div></div>
     ${(()=>{const q=parseFloat(c.best_qty)||1,p=parseFloat(c.best_price)||0;return q>1.5?`<div style="font-size:11px;color:var(--text3);margin:-4px 0 6px;font-family:var(--font-mono);">${Math.round(q)}${c.best_unit||''} lot · $${p.toFixed(2)} total</div>`:'';})()}
     <div class="pc-vendor">${c.best_vendor||'—'}${c.best_url?` · <a href="${c.best_url}" target="_blank" onclick="event.stopPropagation()">Buy →</a>`:''}</div>
     <div class="trend-row"><span>7d: ${tH(c.trend_7d)}</span><span>30d: ${tH(c.trend_30d)}</span></div>${spark}
   </div>`;
 }
-function renderAll(){renderDash();renderComponents();renderAmmo();renderBvB();renderCharts();renderSettings();}
+function renderAll(){renderDash();renderComponents();renderAmmo();renderBvB();renderCharts();renderSettings();renderInventory();renderAlerts();populateSelects();}
 function renderDash(){
   const all=Object.values(ALL),buys=all.filter(c=>c.alert==='buy'),stocks=all.filter(c=>c.alert==='stock_up');
   document.getElementById('dash-stats').innerHTML=`
@@ -633,9 +700,158 @@ window.showPage=id=>{
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('page-'+id)?.classList.add('active');
-  const idx=['dashboard','components','ammo','buildvsbuy','performance','charts','settings'].indexOf(id);
+  const idx=['dashboard','components','ammo','buildvsbuy','performance','charts','inventory','alerts','settings'].indexOf(id);
   document.querySelectorAll('.nav-btn')[idx]?.classList.add('active');
 };
+
+// ── Populate component selects ─────────────────────────────────────
+function populateSelects(){
+  const comps=Object.values(ALL).filter(c=>getCat(c)!=='factory_ammo').sort((a,b)=>(a.component_name||'').localeCompare(b.component_name||''));
+  const opts=comps.map(c=>`<option value="${c.component_id}">${c.component_name||c.component_id} (${c.best_unit||'unit'})</option>`).join('');
+  ['inv-comp','alrt-comp'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML=opts||'<option value="">No data loaded</option>';});
+}
+
+// ── Inventory (localStorage: ammiq_inventory) ──────────────────────
+function getInventory(){return JSON.parse(localStorage.getItem('ammiq_inventory')||'[]');}
+function saveInventory(inv){localStorage.setItem('ammiq_inventory',JSON.stringify(inv));}
+
+window.addInventory=()=>{
+  const compId=document.getElementById('inv-comp')?.value;
+  const qty=parseFloat(document.getElementById('inv-qty')?.value||0);
+  const paid=parseFloat(document.getElementById('inv-paid')?.value||0);
+  if(!compId||qty<=0){alert('Select a component and enter a qty > 0.');return;}
+  const inv=getInventory();
+  const existing=inv.find(r=>r.compId===compId);
+  if(existing){
+    // Update existing holding — add qty, recalculate weighted avg paid price
+    const totalCost=existing.qty*existing.paidPer + qty*paid;
+    existing.qty+=qty;
+    existing.paidPer=totalCost/existing.qty;
+    existing.updatedAt=new Date().toISOString().slice(0,10);
+  } else {
+    inv.push({compId,qty,paidPer:paid,addedAt:new Date().toISOString().slice(0,10)});
+  }
+  saveInventory(inv);
+  renderInventory();
+  showPage('inventory');
+};
+
+window.removeInventory=compId=>{
+  if(!confirm('Remove this holding?'))return;
+  saveInventory(getInventory().filter(r=>r.compId!==compId));
+  renderInventory();
+};
+
+function renderInventory(){
+  const inv=getInventory();
+  const rows=inv.map(r=>{
+    const comp=ALL[r.compId];
+    const market=comp?.best_per_unit||0;
+    const unit=comp?.best_unit||'unit';
+    const totalCost=r.qty*r.paidPer;
+    const marketVal=r.qty*market;
+    const pl=marketVal-totalCost;
+    const plCls=pl>=0?'inv-pl-pos':'inv-pl-neg';
+    const plSign=pl>=0?'+':'';
+    return`<tr>
+      <td class="td-name">${comp?.component_name||r.compId}</td>
+      <td style="font-family:var(--font-mono);font-size:12px;">${unit}</td>
+      <td style="text-align:right;font-family:var(--font-mono);font-size:12px;">${r.qty%1===0?r.qty.toFixed(0):r.qty.toFixed(2)}</td>
+      <td style="text-align:right;font-family:var(--font-mono);font-size:12px;">${fp(r.paidPer)}</td>
+      <td style="text-align:right;font-family:var(--font-mono);font-size:12px;color:var(--accent);">${market?fp(market):'—'}</td>
+      <td style="text-align:right;font-family:var(--font-mono);font-size:12px;">$${totalCost.toFixed(2)}</td>
+      <td style="text-align:right;font-family:var(--font-mono);font-size:12px;">${market?'$'+marketVal.toFixed(2):'—'}</td>
+      <td style="text-align:right;font-family:var(--font-mono);font-size:12px;" class="${plCls}">${market?plSign+'$'+Math.abs(pl).toFixed(2):'—'}</td>
+      <td style="text-align:center;"><button class="btn sm ghost" onclick="removeInventory('${r.compId}')" style="color:var(--red);border-color:var(--red);">Remove</button></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('inv-table').innerHTML=rows||'<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:30px;">No inventory tracked yet — add items above.</td></tr>';
+
+  // Stats
+  const totalCost=inv.reduce((s,r)=>s+r.qty*(r.paidPer||0),0);
+  const totalMarket=inv.reduce((s,r)=>{const m=ALL[r.compId]?.best_per_unit||0;return s+r.qty*m;},0);
+  const pl=totalMarket-totalCost;
+  const plColor=pl>=0?'var(--green)':'var(--red)';
+  document.getElementById('inv-stats').innerHTML=`
+    <div class="stat-box"><div class="stat-label">Holdings</div><div class="stat-val">${inv.length}</div><div class="stat-sub">components</div></div>
+    <div class="stat-box ab"><div class="stat-label">Total Cost Basis</div><div class="stat-val" style="font-size:22px;margin-top:5px;">$${totalCost.toFixed(2)}</div><div class="stat-sub">what you paid</div></div>
+    <div class="stat-box gb"><div class="stat-label">Market Value</div><div class="stat-val" style="font-size:22px;margin-top:5px;">$${totalMarket.toFixed(2)}</div><div class="stat-sub">at today's best prices</div></div>
+    <div class="stat-box" style="border-top:3px solid ${plColor};"><div class="stat-label">Unrealized P&amp;L</div><div class="stat-val" style="font-size:22px;margin-top:5px;color:${plColor};">${pl>=0?'+':''} $${Math.abs(pl).toFixed(2)}</div><div class="stat-sub">${pl>=0?'above':'below'} cost basis</div></div>`;
+}
+
+// ── Price Alerts (localStorage: ammiq_alert_thresholds) ─────────────
+function getThresholds(){return JSON.parse(localStorage.getItem('ammiq_alert_thresholds')||'{}');}
+function saveThresholds(t){localStorage.setItem('ammiq_alert_thresholds',JSON.stringify(t));}
+
+window.saveAlertThreshold=()=>{
+  const compId=document.getElementById('alrt-comp')?.value;
+  const thresh=parseFloat(document.getElementById('alrt-thresh')?.value||0);
+  if(!compId||thresh<=0){alert('Select a component and enter a threshold > 0.');return;}
+  const t=getThresholds();
+  t[compId]=thresh;
+  saveThresholds(t);
+  renderAlerts();renderAll();
+};
+
+window.removeAlertThreshold=compId=>{
+  const t=getThresholds();
+  delete t[compId];
+  saveThresholds(t);
+  renderAlerts();renderAll();
+};
+
+// Quick-set alert from card bell icon
+window.quickSetAlert=(compId,name,unit)=>{
+  const t=getThresholds();
+  const cur=ALL[compId]?.best_per_unit;
+  const existing=t[compId]?`\nCurrent alert: $${t[compId].toFixed(4)} / ${unit}\n`:'';
+  const ans=prompt(`Set price alert for ${name}\n${existing}Alert when $/unit drops below (leave blank to remove):`,t[compId]||'');
+  if(ans===null)return; // cancelled
+  if(ans.trim()===''){delete t[compId];}
+  else{const v=parseFloat(ans);if(!isNaN(v)&&v>0)t[compId]=v;else{alert('Invalid price.');return;}}
+  saveThresholds(t);
+  renderAll();
+};
+
+function renderAlerts(){
+  const t=getThresholds();
+  const entries=Object.entries(t);
+
+  // Active thresholds list
+  const alertRows=entries.map(([id,thresh])=>{
+    const comp=ALL[id];
+    const cur=comp?.best_per_unit;
+    const unit=comp?.best_unit||'unit';
+    const hit=cur&&cur<=thresh;
+    return`<div class="alert-threshold-row">
+      <div><div style="font-weight:600;color:var(--text);">${comp?.component_name||id}</div>
+        <div style="font-size:11px;color:var(--text3);font-family:var(--font-mono);">target: &lt; $${thresh.toFixed(4)} / ${unit}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        ${cur?`<div style="font-family:var(--font-mono);font-size:13px;color:${hit?'var(--green)':'var(--text2)'};">${hit?'🔔 ':''}Now ${fp(cur)}</div>`:'<div style="color:var(--text3);">No data</div>'}
+        <button class="btn sm ghost" onclick="removeAlertThreshold('${id}')" style="color:var(--red);border-color:var(--red);">Remove</button>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('alrt-table').innerHTML=alertRows||'<div style="color:var(--text3);font-size:13px;">No thresholds set yet.</div>';
+
+  // Triggered alerts
+  const triggered=entries.filter(([id,thresh])=>{const cur=ALL[id]?.best_per_unit;return cur&&cur<=thresh;});
+  document.getElementById('alrt-triggered').innerHTML=triggered.length
+    ?triggered.map(([id,thresh])=>{
+        const comp=ALL[id];const cur=comp?.best_per_unit;const unit=comp?.best_unit||'unit';
+        const savings=((thresh-cur)/thresh*100).toFixed(1);
+        return`<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;margin-bottom:8px;background:rgba(39,174,96,0.08);border:1px solid rgba(39,174,96,0.3);border-radius:8px;">
+          <div><div style="font-weight:700;color:var(--green);font-size:15px;">🔔 ${comp?.component_name||id}</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:2px;font-family:var(--font-mono);">Now ${fp(cur)} vs target &lt;$${thresh.toFixed(4)} · ${savings}% below target</div>
+          </div>
+          ${comp?.best_url?`<a href="${comp.best_url}" target="_blank" class="btn warm sm">Buy Now →</a>`:''}
+        </div>`;
+      }).join('')
+    :'<div style="color:var(--text3);font-size:13px;">None yet — prices are currently above your thresholds.</div>';
+}
+
 window.manualRefresh=()=>load();
 window.saveConfig=()=>{localStorage.setItem('ammiq_pid',document.getElementById('cfg-pid')?.value||'');localStorage.setItem('ammiq_key',document.getElementById('cfg-key')?.value||'');document.getElementById('cfg-status').textContent='✓ Saved — reload to apply.';};
 window.testConn=()=>{document.getElementById('cfg-status').textContent='Testing…';setTimeout(()=>{document.getElementById('cfg-status').textContent=db?'✓ Connected to Firebase':'✗ Not connected — check credentials';},800);};
