@@ -99,14 +99,17 @@ CATEGORY_MIN_PER_UNIT = {
 # ── Data class ────────────────────────────────────────────────────
 @dataclass
 class PriceOffer:
-    vendor:     str
-    price:      float
-    qty:        float
-    unit:       str
-    per_unit:   float
-    url:        str
-    in_stock:   bool = True
-    scraped_at: str  = TODAY
+    vendor:       str
+    price:        float
+    qty:          float
+    unit:         str
+    per_unit:     float
+    url:          str
+    in_stock:     bool  = True
+    scraped_at:   str   = TODAY
+    title:        str   = ""
+    list_price:   float = 0.0   # original price before volume discount
+    discount_pct: float = 0.0   # e.g. 10.0 for "save 10%"
 
 # ── CLI ───────────────────────────────────────────────────────────
 def parse_args():
@@ -707,18 +710,20 @@ def scrape_ebay(component):
                     if item_id:
                         seen_ids.add(item_id)
 
-                    title = item.get("title", "")
+                    title      = item.get("title", "")
                     price_info = item.get("price", {})
                     ship_info  = (item.get("shippingOptions") or [{}])[0]
-                    price = float(price_info.get("value", 0) or 0)
+                    list_price = float(price_info.get("value", 0) or 0)
+                    price      = list_price
 
-                    # Use volume-discounted price if available ("Save 10% when you buy more")
+                    # Volume discount ("Save X% when you buy more")
                     disc_info  = item.get("discountPricingInfo", {})
-                    disc_price = float((disc_info.get("discountAmount") or {}).get("value", 0) or 0)
-                    if disc_price and disc_price < price:
-                        price = disc_price
+                    disc_pct   = float((disc_info.get("discountPercentage") or 0) or 0)
+                    disc_amt   = float((disc_info.get("discountAmount") or {}).get("value", 0) or 0)
+                    if disc_amt and disc_amt < price:
+                        price = disc_amt
 
-                    ship  = float((ship_info.get("shippingCost") or {}).get("value", 0) or 0)
+                    ship = float((ship_info.get("shippingCost") or {}).get("value", 0) or 0)
                     price += ship   # total landed cost
                     if not price:
                         continue
@@ -739,7 +744,9 @@ def scrape_ebay(component):
                         continue
 
                     offers.append(PriceOffer(
-                        "eBay", price, qty, unit, per_unit, url_item
+                        vendor="eBay", price=price, qty=qty, unit=unit,
+                        per_unit=per_unit, url=url_item,
+                        title=title, list_price=list_price, discount_pct=disc_pct,
                     ))
 
                 offset += PAGE

@@ -532,153 +532,102 @@ window.showDetail=id=>{
   const c=ALL[id];if(!c)return;
   const offers=c.all_offers||[];
   const unit=c.best_unit||'unit';
-  const cat=getCat(c);
-  // Sensible default purchase quantity by category
-  const defaultQty={metals:25,powders:1,primers:500,brass:500,factory_ammo:50,coatings:1}[cat]||10;
 
-  // ── Modal shell ──────────────────────────────────────────────────
+  // ── Full-screen overlay ──────────────────────────────────────────
   const modal=document.createElement('div');
-  modal.style.cssText='position:fixed;inset:0;background:rgba(30,58,66,0.78);backdrop-filter:blur(3px);z-index:200;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;';
-  const box=document.createElement('div');
-  box.style.cssText='background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.22);width:100%;max-width:620px;padding:28px;';
-  modal.appendChild(box);
+  modal.style.cssText='position:fixed;inset:0;background:#0b1a1f;z-index:200;overflow-y:auto;display:flex;flex-direction:column;';
 
-  // ── Header ───────────────────────────────────────────────────────
-  const hdr=document.createElement('div');
-  hdr.innerHTML=`
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
-      <div style="font-family:var(--font-display);font-size:24px;letter-spacing:2px;color:var(--header);">${c.component_name||c.name}</div>
-      <button id="md-close" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text3);flex-shrink:0;margin-left:12px;">✕</button>
-    </div>
-    <div style="font-size:12px;color:var(--text2);margin-bottom:20px;">
-      Best overall: <strong>${fp(c.best_per_unit)} / ${unit}</strong> @ ${c.best_vendor}
-      &nbsp;·&nbsp; ${tH(c.trend_7d)} 7d &nbsp;·&nbsp; ${tH(c.trend_30d)} 30d
-    </div>`;
-  box.appendChild(hdr);
+  // ── Sort state ───────────────────────────────────────────────────
+  let sortKey='per_unit'; // per_unit | vendor | qty | price
 
-  // ── Quantity selector ────────────────────────────────────────────
-  const qSec=document.createElement('div');
-  qSec.style.cssText='background:#f4f8f6;border:1px solid #d4e8dc;border-radius:10px;padding:14px 16px;margin-bottom:20px;';
-  qSec.innerHTML=`
-    <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5a8a6a;font-weight:700;margin-bottom:10px;">How much do you want to buy?</div>
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <input id="qty-input" type="number" min="1" value="${defaultQty}"
-        style="width:90px;font-size:24px;font-family:var(--font-display);border:2px solid #b0d4c0;border-radius:8px;padding:6px 10px;color:var(--header);text-align:center;outline:none;">
-      <span style="font-size:15px;color:var(--text2);font-weight:600;">${unit}</span>
-      <div id="qty-summary" style="font-size:12px;color:var(--text3);margin-left:auto;text-align:right;"></div>
-    </div>`;
-  box.appendChild(qSec);
-
-  // ── Offers table (reactive) ──────────────────────────────────────
-  const offersDiv=document.createElement('div');
-  box.appendChild(offersDiv);
-
-  function renderOffers(wantQty){
-    wantQty=Math.max(1,wantQty);
-    if(!offers.length){offersDiv.innerHTML='<div style="color:var(--text3);font-size:13px;padding:8px 0;">No live offer data yet — check back after next scrape.</div>';return;}
-
-    // ── Group offers by vendor ───────────────────────────────────────
-    const byVendor={};
-    offers.forEach(o=>{
-      const v=o.vendor||'Unknown';
-      if(!byVendor[v])byVendor[v]=[];
-      byVendor[v].push(o);
+  function getSorted(){
+    return [...offers].sort((a,b)=>{
+      if(sortKey==='vendor') return (a.vendor||'').localeCompare(b.vendor||'');
+      if(sortKey==='qty')    return (parseFloat(a.qty)||0)-(parseFloat(b.qty)||0);
+      if(sortKey==='price')  return (parseFloat(a.price)||0)-(parseFloat(b.price)||0);
+      return (parseFloat(a.per_unit)||0)-(parseFloat(b.per_unit)||0); // best price
     });
+  }
 
-    // ── For each vendor, find the optimal lot for wantQty ───────────
-    // "Optimal" = lowest total cost; ties broken by least waste
-    function bestLot(vOffers,qty){
-      return vOffers.map(o=>{
-        const lotQty =parseFloat(o.qty)||1;
-        const lotPrice=parseFloat(o.price)||0;
-        const perUnit =parseFloat(o.per_unit)||0;
-        const lotsNeeded=Math.ceil(qty/lotQty);
-        const totalCost =lotsNeeded*lotPrice;
-        const actualQty =lotsNeeded*lotQty;
-        const waste     =actualQty-qty;
-        const isLargeLot=lotQty>=500;
-        return{...o,lotQty,lotPrice,perUnit,lotsNeeded,totalCost,actualQty,waste,isLargeLot};
-      }).sort((a,b)=>a.totalCost-b.totalCost||a.waste-b.waste)[0];
-    }
+  function renderTable(){
+    const sorted=getSorted();
+    const btnStyle=(k)=>`padding:7px 16px;border-radius:6px;font-size:11px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;font-family:var(--font-mono);border:1px solid ${sortKey===k?'#4ecdc4':'#2a4a54'};background:${sortKey===k?'#4ecdc4':'transparent'};color:${sortKey===k?'#0b1a1f':'#4ecdc4'};`;
+    const rows=sorted.map((o,i)=>{
+      const pu=parseFloat(o.per_unit)||0;
+      const qty=parseFloat(o.qty)||0;
+      const price=parseFloat(o.price)||0;
+      const listPrice=parseFloat(o.list_price)||0;
+      const discPct=parseFloat(o.discount_pct)||0;
+      const isBest=i===0&&sortKey==='per_unit';
+      const dealBadge=discPct>0
+        ?`<span style="display:inline-block;background:#f0a500;color:#000;font-size:9px;font-weight:700;padding:2px 5px;border-radius:3px;letter-spacing:0.5px;">🏷 ${discPct.toFixed(0)}% OFF if buying more</span>`:'';
+      const listNote=(listPrice>0&&Math.abs(listPrice-price)>0.01)
+        ?`<div style="color:#667;font-size:10px;text-decoration:line-through;">list $${listPrice.toFixed(2)}</div>`:'';
+      return`<tr style="border-bottom:1px solid #162830;${isBest?'background:#0d2a20;':i%2===0?'':'background:#0e2028'}">
+        <td style="padding:10px 10px;color:#445;font-size:11px;vertical-align:top;">${i+1}</td>
+        <td style="padding:10px 8px;vertical-align:top;white-space:nowrap;">
+          <div style="color:#9ab;font-size:12px;font-weight:700;">${o.vendor||'—'}</div>
+        </td>
+        <td style="padding:10px 8px;vertical-align:top;max-width:280px;">
+          <div style="color:#cde;font-size:12px;line-height:1.5;margin-bottom:4px;">${o.title||'—'}</div>
+          ${dealBadge}
+        </td>
+        <td style="padding:10px 8px;vertical-align:top;white-space:nowrap;text-align:right;">
+          <div style="color:${isBest?'#4ecdc4':'#e0f0f0'};font-size:14px;font-weight:700;">$${pu.toFixed(4)}</div>
+          <div style="color:#556;font-size:10px;">/ ${unit}</div>
+        </td>
+        <td style="padding:10px 8px;vertical-align:top;white-space:nowrap;text-align:right;">
+          <div style="color:#cde;font-size:13px;">${qty%1===0?qty.toFixed(0):qty.toFixed(1)} ${unit}</div>
+        </td>
+        <td style="padding:10px 8px;vertical-align:top;white-space:nowrap;text-align:right;">
+          <div style="color:#e0f0f0;font-size:13px;">$${price.toFixed(2)}</div>
+          ${listNote}
+        </td>
+        <td style="padding:10px 10px;vertical-align:top;text-align:center;">
+          ${o.url?`<a href="${o.url}" target="_blank" style="color:#4ecdc4;font-size:12px;font-weight:700;white-space:nowrap;text-decoration:none;border:1px solid #4ecdc4;border-radius:4px;padding:3px 8px;">Buy →</a>`:'<span style="color:#334;font-size:10px;">—</span>'}
+        </td>
+      </tr>`;
+    }).join('');
 
-    // Build one row per vendor, sorted by total cost for this qty
-    const vendorRows=Object.entries(byVendor).map(([name,vOffers])=>{
-      const best=bestLot(vOffers,wantQty);
-      // All package sizes for this vendor, sorted by qty ascending
-      const allLots=vOffers.map(o=>{
-        const lotQty=parseFloat(o.qty)||1;
-        const lotPrice=parseFloat(o.price)||0;
-        return{...o,lotQty,lotPrice};
-      }).sort((a,b)=>a.lotQty-b.lotQty);
-      return{name,best,allLots};
-    }).filter(r=>r.best).sort((a,b)=>(a.best.totalCost||0)-(b.best.totalCost||0));
-
-    // Best absolute per-unit across everything (bulk buyer callout)
-    const globalBestPU=[...offers].sort((a,b)=>(a.per_unit||999)-(b.per_unit||999))[0];
-    const bestVendorName=vendorRows[0]?.name;
-    const globalBestPUisBest=globalBestPU&&globalBestPU.vendor===bestVendorName;
-
-    // Summary
-    const cheapest=vendorRows[0]?.best;
-    document.getElementById('qty-summary').textContent=
-      cheapest?`Best for ${wantQty} ${unit}: ${cheapest.vendor} · $${cheapest.totalCost.toFixed(2)} total`:'';
-
-    offersDiv.innerHTML=`
-      <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--text3);margin-bottom:10px;font-weight:700;">
-        Vendors — best option for ${wantQty} ${unit} · all package sizes shown
+    modal.innerHTML=`
+      <div style="background:#0d2230;border-bottom:1px solid #1e3a46;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;position:sticky;top:0;z-index:10;">
+        <div>
+          <div style="color:#4ecdc4;font-size:18px;font-family:var(--font-display);letter-spacing:2px;">${(c.component_name||id).toUpperCase()}</div>
+          <div style="color:#556;font-size:11px;margin-top:2px;">${offers.length} offers · last scraped ${c.last_updated||'unknown'} · shipping included in all prices</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="color:#445;font-size:10px;letter-spacing:1px;text-transform:uppercase;margin-right:4px;">Sort:</span>
+          <button data-sort="per_unit" style="${btnStyle('per_unit')}">★ Best Price</button>
+          <button data-sort="vendor"   style="${btnStyle('vendor')}">Provider</button>
+          <button data-sort="qty"      style="${btnStyle('qty')}">Lot Size</button>
+          <button data-sort="price"    style="${btnStyle('price')}">Total Cost</button>
+          <button id="dt-close" style="margin-left:8px;background:none;border:1px solid #556;color:#778;border-radius:6px;padding:7px 14px;cursor:pointer;font-family:var(--font-mono);font-size:12px;">✕ Close</button>
+        </div>
       </div>
-      ${vendorRows.map((row,i)=>{
-        const o=row.best;
-        const isBest=i===0;
-        const lotsLabel=o.lotQty>1.5
-          ?`${o.lotsNeeded}× ${o.lotQty%1===0?Math.round(o.lotQty):o.lotQty}${unit} lot${o.lotsNeeded>1?'s':''}`
-          :`${wantQty} ${unit} (any qty)`;
-        // All package sizes for this vendor
-        const pkgSizes=row.allLots.map(l=>{
-          const lq=l.lotQty%1===0?Math.round(l.lotQty):l.lotQty;
-          const tag=lq>1.5?`${lq}${unit} lot`:`per ${unit}`;
-          return`<span style="display:inline-flex;align-items:center;gap:4px;background:#f0f4f2;border-radius:4px;padding:2px 6px;font-size:11px;font-family:var(--font-mono);color:var(--text2);">${tag} · $${(l.lotPrice||0).toFixed(2)}</span>`;
-        }).join(' ');
-        return`<div style="padding:12px 0;border-bottom:1px solid var(--border);${isBest?'border-left:3px solid var(--green);padding-left:10px;margin-left:-10px;':''}" >
-          <div style="display:grid;grid-template-columns:1fr 80px 90px 52px;gap:6px;align-items:start;margin-bottom:6px;">
-            <div>
-              <div style="font-weight:700;font-size:14px;${isBest?'color:var(--green);':'color:var(--header);'}">${row.name}${isBest?' ★':''}</div>
-              <div style="font-size:11px;color:var(--text3);margin-top:2px;">${lotsLabel}${o.waste>0?` · <span style="color:#c08000;">${Math.round(o.waste)}${unit} leftover</span>`:''}</div>
-              ${o.isLargeLot?`<div style="font-size:11px;color:#c05000;margin-top:2px;">⚠ verify min. order with vendor</div>`:''}
-            </div>
-            <div style="text-align:right;font-family:var(--font-mono);font-size:11px;color:var(--text2);padding-top:2px;">$${o.perUnit.toFixed(4)}<br><span style="color:var(--text3);">/ ${unit}</span></div>
-            <div style="text-align:right;font-family:var(--font-display);font-size:20px;font-weight:700;${isBest?'color:var(--green);':'color:var(--header);'}">$${o.totalCost.toFixed(2)}</div>
-            <div style="text-align:right;">${o.url?`<a href="${o.url}" target="_blank" style="color:var(--blue);font-size:12px;font-weight:700;white-space:nowrap;">Buy →</a>`:''}</div>
-          </div>
-          <div style="display:flex;flex-wrap:wrap;gap:4px;">${pkgSizes}</div>
-        </div>`;
-      }).join('')}
-      ${!globalBestPUisBest&&globalBestPU?`
-        <div style="margin-top:16px;padding:13px;background:#fffbee;border-radius:8px;border:1px solid #e8d880;">
-          <div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#9a7000;font-weight:700;margin-bottom:5px;">Lowest per-unit price (bulk buyers)</div>
-          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-            <div>
-              <span style="font-weight:700;color:var(--header);">${globalBestPU.vendor}</span>
-              <span style="font-family:var(--font-mono);font-size:13px;color:var(--text2);margin-left:8px;">$${(globalBestPU.per_unit||0).toFixed(4)} / ${unit}</span>
-              <div style="font-size:11px;color:#9a7000;margin-top:3px;">Best per-unit available — verify minimum order with vendor before purchasing</div>
-            </div>
-            ${globalBestPU.url?`<a href="${globalBestPU.url}" target="_blank" style="color:var(--blue);font-size:12px;font-weight:700;white-space:nowrap;">View listing →</a>`:''}
-          </div>
-        </div>`:''}`;
+      <div style="padding:0 24px 24px;overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;min-width:700px;">
+          <thead><tr style="border-bottom:1px solid #2a4a54;">
+            <th style="padding:8px 10px;color:#445;font-size:10px;text-align:left;letter-spacing:1px;">#</th>
+            <th style="padding:8px 8px;color:#4ecdc4;font-size:10px;text-align:left;letter-spacing:1px;">PROVIDER</th>
+            <th style="padding:8px 8px;color:#4ecdc4;font-size:10px;text-align:left;letter-spacing:1px;">TITLE / DEAL</th>
+            <th style="padding:8px 8px;color:#4ecdc4;font-size:10px;text-align:right;letter-spacing:1px;">$/UNIT</th>
+            <th style="padding:8px 8px;color:#4ecdc4;font-size:10px;text-align:right;letter-spacing:1px;">LOT SIZE</th>
+            <th style="padding:8px 8px;color:#4ecdc4;font-size:10px;text-align:right;letter-spacing:1px;">TOTAL PRICE</th>
+            <th style="padding:8px 10px;color:#4ecdc4;font-size:10px;text-align:center;letter-spacing:1px;">LINK</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        ${offers.length===0?'<div style="color:#445;text-align:center;padding:40px;font-size:13px;">No offer data yet — trigger a scrape run first.</div>':''}
+      </div>`;
+
+    modal.querySelector('#dt-close').onclick=()=>modal.remove();
+    modal.querySelectorAll('[data-sort]').forEach(btn=>{
+      btn.onclick=()=>{sortKey=btn.dataset.sort;renderTable();};
+    });
   }
 
-  // ── Wire up events + show modal FIRST ──────────────────────────
-  modal.onclick=e=>{if(e.target===modal)modal.remove();};
-  box.querySelector('#md-close').onclick=()=>modal.remove();
-  qSec.querySelector('#qty-input').addEventListener('input',e=>{
-    const v=parseInt(e.target.value,10);
-    if(v>0)try{renderOffers(v);}catch(err){console.warn('renderOffers error:',err);}
-  });
+  renderTable();
   document.body.appendChild(modal);
-  try{renderOffers(defaultQty);}catch(err){
-    console.warn('renderOffers error:',err);
-    offersDiv.innerHTML='<div style="color:var(--text3);padding:12px 0;">Could not load offers — try refreshing.</div>';
-  }
 };
 window.showPage=id=>{
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
