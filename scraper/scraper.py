@@ -898,7 +898,8 @@ def compute_trends(db, component_id, current_best):
     return trends
 
 # ── Firebase write ────────────────────────────────────────────────
-def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=False):
+def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=False,
+                      component=None):
     if not offers:
         log.warning(f"  No offers — skipping {comp_name}")
         return None
@@ -1104,6 +1105,7 @@ def run_scraper():
                 best          = write_to_firebase(
                     db, comp_id, comp_name, category,
                     all_offers, trends, args.dry_run,
+                    component=component,
                 )
                 if best and trends.get("alert") in ("buy", "stock_up") and not args.no_email:
                     alerts.append({
