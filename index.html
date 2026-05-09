@@ -409,7 +409,7 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(19
     <button class="btn warm" onclick="addInventory()">+ Add to Inventory</button>
   </div>
   <div class="panel">
-    <div class="panel-title">Current Holdings</div>
+    <div class="panel-title">Component Holdings</div>
     <div style="overflow-x:auto;"><table class="data-table">
       <thead><tr>
         <th>Component</th><th>Unit</th><th style="text-align:right;">Qty</th>
@@ -417,8 +417,30 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(19
         <th style="text-align:right;">Total Cost</th><th style="text-align:right;">Market Value</th>
         <th style="text-align:right;">P&amp;L</th><th></th>
       </tr></thead>
-      <tbody id="inv-table"><tr><td colspan="9" style="text-align:center;color:var(--text3);padding:30px;">No inventory tracked yet.</td></tr></tbody>
+      <tbody id="inv-table"><tr><td colspan="9" style="text-align:center;color:var(--text3);padding:30px;">No inventory tracked yet — add items above.</td></tr></tbody>
     </table></div>
+  </div>
+
+  <!-- FIRST Warehouse Mirror -->
+  <div class="panel" style="margin-top:20px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div>
+        <div class="panel-title" style="margin-bottom:2px;">🎯 F.I.R.S.T. Ammo Warehouse</div>
+        <div style="font-size:11px;color:var(--text3);letter-spacing:1.5px;text-transform:uppercase;">Live from practical-pewologist · auto-refreshes on load</div>
+      </div>
+      <button class="btn sm ghost" onclick="loadFirstWarehouse()">&#8635; Sync</button>
+    </div>
+    <div id="first-wh-status" style="font-size:12px;color:var(--text3);margin-bottom:12px;"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div>
+        <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--text3);font-weight:700;margin-bottom:8px;border-bottom:1px solid var(--border);padding-bottom:6px;">Handloaded Ammo</div>
+        <div id="first-wh-reload"></div>
+      </div>
+      <div>
+        <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--text3);font-weight:700;margin-bottom:8px;border-bottom:1px solid var(--border);padding-bottom:6px;">Factory Ammo</div>
+        <div id="first-wh-factory"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -598,7 +620,10 @@ function renderSettings(){
 window.showDetail=id=>{
   const c=ALL[id];if(!c)return;
   const offers=c.all_offers||[];
-  const unit=c.best_unit||'unit';
+  const rawUnit=c.best_unit||'unit';
+  // If unit is purely numeric (e.g. "500" meaning "per 500 cases"), use a readable label
+  const unit=rawUnit;
+  const unitLabel=/^\d+$/.test(String(rawUnit))?'ct':rawUnit;
 
   // ── Full-screen overlay ──────────────────────────────────────────
   const modal=document.createElement('div');
@@ -641,10 +666,10 @@ window.showDetail=id=>{
         </td>
         <td style="padding:10px 8px;vertical-align:top;white-space:nowrap;text-align:right;">
           <div style="color:${isBest?'#4ecdc4':'#e0f0f0'};font-size:14px;font-weight:700;">$${pu.toFixed(4)}</div>
-          <div style="color:#556;font-size:10px;">/ ${unit}</div>
+          <div style="color:#556;font-size:10px;">/ ${unitLabel}</div>
         </td>
         <td style="padding:10px 8px;vertical-align:top;white-space:nowrap;text-align:right;">
-          <div style="color:#cde;font-size:13px;">${qty%1===0?qty.toFixed(0):qty.toFixed(1)} ${unit}</div>
+          <div style="color:#cde;font-size:13px;">${qty%1===0?qty.toFixed(0):qty.toFixed(1)} ${unitLabel}</div>
         </td>
         <td style="padding:10px 8px;vertical-align:top;white-space:nowrap;text-align:right;">
           <div style="color:#e0f0f0;font-size:13px;">$${price.toFixed(2)}</div>
@@ -851,6 +876,101 @@ function renderAlerts(){
       }).join('')
     :'<div style="color:var(--text3);font-size:13px;">None yet — prices are currently above your thresholds.</div>';
 }
+
+// ── FIRST Warehouse Mirror ─────────────────────────────────────────
+// Reads warehouse_ammo + warehouse_factory_ammo from the practical-pewologist
+// Firebase project (separate from Ammo Radar's ammiq-d63b2 project).
+const FIRST_CONFIG={
+  apiKey:"AIzaSyBTbI56PJm__N3duWmYaeVi7DB0lbHSVYI",
+  projectId:"practical-pewologist",
+  authDomain:"practical-pewologist.firebaseapp.com",
+};
+const FIRST_RELOAD_NAMES={
+  '38_hbwc_bullseye':'.38 HBWC Bullseye',
+  '45_200_swc_n320':'.45 ACP 200gr SWC',
+  '9mm_120_n320':'9mm 120gr N320',
+  '9mm_135_n320':'9mm 135gr TC N320',
+  '9mm_sub_n320':'9mm 135gr Subsonic',
+  '357_158_bullseye':'.357 158gr SWC',
+};
+let _firstDb=null;
+
+async function initFirstFirebase(){
+  if(_firstDb)return _firstDb;
+  try{
+    const{initializeApp,getApps}=await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js');
+    const{getFirestore,collection,getDocs}=await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+    // Use a named app so it doesn't collide with the Ammo Radar default app
+    const existing=getApps().find(a=>a.name==='first-app');
+    const app=existing||initializeApp(FIRST_CONFIG,'first-app');
+    _firstDb={db:getFirestore(app),collection,getDocs};
+    return _firstDb;
+  }catch(e){console.warn('FIRST Firebase init failed:',e);return null;}
+}
+
+window.loadFirstWarehouse=async()=>{
+  const statusEl=document.getElementById('first-wh-status');
+  const reloadEl=document.getElementById('first-wh-reload');
+  const factoryEl=document.getElementById('first-wh-factory');
+  if(!statusEl)return;
+  statusEl.textContent='Connecting to F.I.R.S.T…';
+
+  const fb=await initFirstFirebase();
+  if(!fb){
+    statusEl.textContent='⚠ Could not connect to F.I.R.S.T. Firebase.';
+    return;
+  }
+  const{db,collection,getDocs}=fb;
+
+  try{
+    // Handloaded ammo
+    const reloadSnap=await getDocs(collection(db,'warehouse_ammo'));
+    const reloads=[];
+    reloadSnap.forEach(d=>{
+      const qty=d.data().qty||0;
+      const name=d.data().name||FIRST_RELOAD_NAMES[d.id]||d.id.replace(/_/g,' ');
+      reloads.push({id:d.id,name,qty});
+    });
+    reloads.sort((a,b)=>b.qty-a.qty);
+
+    // Factory ammo
+    const factorySnap=await getDocs(collection(db,'warehouse_factory_ammo'));
+    const factories=[];
+    factorySnap.forEach(d=>{
+      const qty=d.data().qty||0;
+      const name=d.data().name||d.id.replace(/_/g,' ');
+      factories.push({id:d.id,name,qty});
+    });
+    factories.sort((a,b)=>b.qty-a.qty);
+
+    const rowStyle='display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px;';
+    const lowStyle='color:var(--red);font-weight:700;';
+    const okStyle='color:var(--text);font-weight:600;';
+
+    reloadEl.innerHTML=reloads.length
+      ?reloads.map(r=>`<div style="${rowStyle}">
+          <div style="color:var(--text2);">${r.name}</div>
+          <div style="${r.qty<50?lowStyle:okStyle}">${r.qty.toLocaleString()} rds${r.qty<50?' ⚠':''}</div>
+        </div>`).join('')
+      :'<div style="color:var(--text3);font-size:12px;padding:10px 0;">No handloaded ammo found.</div>';
+
+    factoryEl.innerHTML=factories.length
+      ?factories.map(f=>`<div style="${rowStyle}">
+          <div style="color:var(--text2);">${f.name}</div>
+          <div style="${f.qty<50?lowStyle:okStyle}">${f.qty.toLocaleString()} rds${f.qty<50?' ⚠':''}</div>
+        </div>`).join('')
+      :'<div style="color:var(--text3);font-size:12px;padding:10px 0;">No factory ammo found.</div>';
+
+    const totalRds=[...reloads,...factories].reduce((s,r)=>s+r.qty,0);
+    statusEl.innerHTML=`<span style="color:var(--green);">✓ Connected</span> · ${reloads.length} handloads · ${factories.length} factory ammo types · ${totalRds.toLocaleString()} total rounds on hand`;
+  }catch(e){
+    console.warn('FIRST warehouse load error:',e);
+    statusEl.textContent='⚠ Error loading warehouse: '+e.message;
+  }
+};
+// Auto-load when user switches to Inventory tab
+const _origShowPage=window.showPage;
+window.showPage=id=>{_origShowPage(id);if(id==='inventory')loadFirstWarehouse();};
 
 window.manualRefresh=()=>load();
 window.saveConfig=()=>{localStorage.setItem('ammiq_pid',document.getElementById('cfg-pid')?.value||'');localStorage.setItem('ammiq_key',document.getElementById('cfg-key')?.value||'');document.getElementById('cfg-status').textContent='✓ Saved — reload to apply.';};

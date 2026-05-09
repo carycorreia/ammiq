@@ -275,6 +275,136 @@ def parse_count_qty(title: str) -> float:
     return 0.0
 
 
+def expand_volume_tiers(product_url: str, base_offer: "PriceOffer", component: dict) -> list:
+    """
+    Fetch an individual product page and look for a volume discount / quantity
+    break table.  Returns a list of PriceOffer objects — one per price tier.
+    Falls back to [base_offer] if no table is found or the fetch fails.
+
+    Handles table patterns like:
+      Rounds | Units | Savings | Price per Unit | Total Price
+      100    |  1    | <none>  | $26.29         | $26.29
+      500    |  5    | Save 5% | $24.98         | $124.88
+
+    Also handles simple "X for $Y" discount rows in Starline-style product pages.
+    """
+    try:
+        soup = fetch_static(product_url)
+        if not soup:
+            return [base_offer]
+
+        qty_unit_field = component.get("qty_unit", "weight")
+        unit_label     = str(component.get("unit", "lb"))
+
+        # ── Strategy 1: table with a "Price per Unit" header ────────────
+        # Find any <table> whose header row contains "price" and either
+        # "unit" or "rounds" — typical volume discount layout.
+        for table in soup.find_all("table"):
+            headers = [th.get_text(strip=True).lower() for th in table.find_all("th")]
+            if not headers:
+                headers = [td.get_text(strip=True).lower()
+                           for td in (table.find("tr") or soup.new_tag("x")).find_all("td")]
+            has_price = any("price" in h for h in headers)
+            has_qty   = any(k in " ".join(headers) for k in ("round", "unit", "count", "qty"))
+            if not has_price or not has_qty:
+                continue
+
+            # Identify column positions
+            price_col = next((i for i,h in enumerate(headers) if "price per" in h or ("price" in h and "total" not in h)), None)
+            qty_col   = next((i for i,h in enumerate(headers) if any(k in h for k in ("round","count","qty"))), 0)
+            total_col = next((i for i,h in enumerate(headers) if "total" in h), None)
+
+            tiers = []
+            for row in table.find_all("tr")[1:]:   # skip header
+                cells = row.find_all(["td","th"])
+                if len(cells) < 2:
+                    continue
+                # qty of items (rounds/cases)
+                qty_text = cells[qty_col].get_text(strip=True).replace(",","") if qty_col < len(cells) else ""
+                qty_val  = 0.0
+                if qty_unit_field == "count":
+                    try: qty_val = float(re.sub(r"[^\d.]","",qty_text))
+                    except: pass
+                else:
+                    qty_val = parse_weight_lbs(qty_text) or base_offer.qty
+
+                # per-unit price
+                if price_col is not None and price_col < len(cells):
+                    pu = parse_price(cells[price_col].get_text())
+                else:
+                    pu = None
+
+                # total price
+                total_price = None
+                if total_col is not None and total_col < len(cells):
+                    total_price = parse_price(cells[total_col].get_text())
+
+                if not pu and total_price and qty_val:
+                    pu = total_price / qty_val
+
+                if not pu or not qty_val:
+                    continue
+
+                # Savings badge text (e.g. "Save 5%")
+                savings_text = ""
+                for cell in cells:
+                    t = cell.get_text(strip=True)
+                    if "save" in t.lower() or "%" in t:
+                        savings_text = t
+                        break
+
+                disc_pct = 0.0
+                m = re.search(r"(\d+(?:\.\d+)?)\s*%", savings_text)
+                if m:
+                    disc_pct = float(m.group(1))
+
+                # total landed cost = total_price + base shipping
+                # keep shipping proportional — use same flat shipping as base offer
+                ship_contribution = base_offer.price - base_offer.per_unit * base_offer.qty
+                landed = (total_price or pu * qty_val) + max(ship_contribution, 0)
+
+                tiers.append(PriceOffer(
+                    vendor=base_offer.vendor,
+                    price=round(landed, 4),
+                    qty=qty_val,
+                    unit=unit_label,
+                    per_unit=round(pu, 6),
+                    url=product_url,
+                    in_stock=base_offer.in_stock,
+                    scraped_at=TODAY,
+                    title=base_offer.title or "",
+                    list_price=base_offer.list_price,
+                    discount_pct=disc_pct,
+                ))
+
+            if tiers:
+                log.debug(f"  Volume tiers found on {product_url[:60]}: {len(tiers)} tier(s)")
+                return tiers
+
+        # ── Strategy 2: look for quantity-select option tags ─────────────
+        # Some sites use <select> or radio buttons for qty breaks.
+        offers = []
+        for opt in soup.select("select.qty option, select[name*='qty'] option, select[name*='pack'] option"):
+            val  = opt.get_text(strip=True)
+            data = opt.get("data-price") or opt.get("value", "")
+            qty  = parse_count_qty(val) if qty_unit_field == "count" else parse_weight_lbs(val)
+            pr   = parse_price(val) or (parse_price(str(data)) if data else None)
+            if qty and pr:
+                offers.append(PriceOffer(
+                    vendor=base_offer.vendor, price=pr, qty=qty, unit=unit_label,
+                    per_unit=round(pr/qty, 6), url=product_url,
+                    in_stock=base_offer.in_stock, scraped_at=TODAY,
+                    title=base_offer.title or "",
+                ))
+        if offers:
+            return offers
+
+    except Exception as e:
+        log.debug(f"  Volume tier expansion failed for {product_url[:60]}: {e}")
+
+    return [base_offer]
+
+
 def first_el(card, selectors: list):
     for sel in selectors:
         el = card.select_one(sel)
@@ -440,6 +570,8 @@ def scrape_grafs(component):
     Uses price-anchor strategy. FIX v2.4: link_pattern now matches relative
     hrefs (/retail/catalog/product/...) instead of requiring the full domain,
     which was why price-anchor was finding prices but returning no offers.
+    FIX v2.6: expand_volume_tiers() fetches each product page and stores every
+    price-break row as a separate PriceOffer.
     """
     offers = []
     for term in component.get("search_terms", [])[:2]:
@@ -450,9 +582,14 @@ def scrape_grafs(component):
         found = price_anchor_offers(
             soup, "Grafs", component,
             link_domain="https://www.grafs.com",
-            link_pattern=r"/retail/catalog/product",   # relative path — fixed in v2.4
+            link_pattern=r"/retail/catalog/product",
         )
-        offers.extend(found)
+        # Expand volume discount tiers for each product found
+        expanded = []
+        for base_offer in found:
+            tiers = expand_volume_tiers(base_offer.url, base_offer, component)
+            expanded.extend(tiers)
+        offers.extend(expanded if expanded else found)
     return offers
 
 
@@ -863,7 +1000,6 @@ def scrape_starline(component):
                 continue
             title_text = title_el.get_text(strip=True) if title_el else ""
             in_stock   = "out" not in (stock_el.get_text().lower() if stock_el else "in")
-            # For brass/primers use count qty from title if available
             qty_unit_field = component.get("qty_unit", "weight")
             if qty_unit_field == "count":
                 parsed_count = parse_count_qty(title_text)
@@ -873,12 +1009,16 @@ def scrape_starline(component):
             href     = link_el["href"] if link_el else url
             if href.startswith("/"):
                 href = "https://www.starlinebrass.com" + href
-            offers.append(PriceOffer(
+            base = PriceOffer(
                 "Starline", price, qty,
                 str(component.get("unit", "500")),
                 round(price / qty, 6) if qty else price, href, in_stock,
                 title=title_text,
-            ))
+            )
+            # Expand volume discount tiers from the product page (Starline shows
+            # qty-break tables: 100ct=$26.29, 500ct=$24.98, 1000ct=$23.66, etc.)
+            tiers = expand_volume_tiers(href, base, component)
+            offers.extend(tiers)
     return offers
 
 
