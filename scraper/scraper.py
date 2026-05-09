@@ -535,7 +535,7 @@ def scrape_powder_valley(component):
     for term in component.get("search_terms", [])[:2]:
         url  = f"https://www.powdervalley.com/search/?q={requests.utils.quote(term)}"
         log.info(f"  Powder Valley (Playwright): {url[:70]}")
-        soup = fetch_js(url, wait_selector="li.ais-Hits-item, li.product", wait_ms=4000)
+        soup = fetch_js(url, wait_selector="li.ais-Hits-item, li.product", wait_ms=2500)
         if not soup:
             continue
         kws   = keywords_for(term)
@@ -584,12 +584,18 @@ def scrape_grafs(component):
             link_domain="https://www.grafs.com",
             link_pattern=r"/retail/catalog/product",
         )
-        # Expand volume discount tiers for each product found
-        expanded = []
-        for base_offer in found:
-            tiers = expand_volume_tiers(base_offer.url, base_offer, component)
-            expanded.extend(tiers)
-        offers.extend(expanded if expanded else found)
+        # Expand volume discount tiers — only for count-unit components (brass/primers)
+        # and only for the first 3 product pages to keep runtime bounded.
+        if component.get("qty_unit") == "count":
+            expanded = []
+            for base_offer in found[:3]:
+                tiers = expand_volume_tiers(base_offer.url, base_offer, component)
+                expanded.extend(tiers)
+            # Keep any remaining base offers we didn't expand
+            expanded.extend(found[3:])
+            offers.extend(expanded if expanded else found)
+        else:
+            offers.extend(found)
     return offers
 
 
@@ -605,7 +611,7 @@ def scrape_midsouth(component):
     for term in component.get("search_terms", [])[:2]:
         url  = f"https://www.midsouthshooterssupply.com/search?SearchTerm={requests.utils.quote(term)}"
         log.info(f"  Midsouth (Playwright): {url[:70]}")
-        soup = fetch_js(url, wait_selector=".product-wrapper, .product", wait_ms=5000)
+        soup = fetch_js(url, wait_selector=".product-wrapper, .product", wait_ms=3000)
         if not soup:
             continue
 
@@ -667,7 +673,7 @@ def scrape_lucky_gunner(component):
         return []
 
     log.info(f"  Lucky Gunner (Playwright): {url}")
-    soup = fetch_js(url, wait_selector="span.price, span.regular-price", wait_ms=5000)
+    soup = fetch_js(url, wait_selector="span.price, span.regular-price", wait_ms=3000)
     if not soup:
         return []
 
@@ -708,7 +714,7 @@ def scrape_ammoseek(component):
     grain = component.get("grain", "")
     url   = f"https://ammoseek.com/ammo/{slug}" + (f"?gr={grain}" if grain else "")
     log.info(f"  AmmoSeek (Playwright): {url}")
-    soup  = fetch_js(url, wait_selector="tr.offer-row, .listing-item", wait_ms=5000)
+    soup  = fetch_js(url, wait_selector="tr.offer-row, .listing-item", wait_ms=3000)
     if not soup:
         return []
     offers = []
@@ -739,7 +745,7 @@ def scrape_target_sports(component):
     for term in component.get("search_terms", [])[:1]:
         url  = f"https://www.targetsportsusa.com/search.aspx?q={requests.utils.quote(term)}"
         log.info(f"  Target Sports (Playwright): {url[:65]}")
-        soup = fetch_js(url, wait_selector=".product-item, .product-detail", wait_ms=4000)
+        soup = fetch_js(url, wait_selector=".product-item, .product-detail", wait_ms=2500)
         if not soup:
             continue
         cards = soup.select(".ts-product-card, .product-item, .product-detail")
@@ -768,7 +774,7 @@ def scrape_brownells(component):
     for term in component.get("search_terms", [])[:1]:
         url  = f"https://www.brownells.com/search/index.htm?k={requests.utils.quote(term)}"
         log.info(f"  Brownells (Playwright): {url[:65]}")
-        soup = fetch_js(url, wait_selector=".js-product-card, .product-item", wait_ms=5000)
+        soup = fetch_js(url, wait_selector=".js-product-card, .product-item", wait_ms=3000)
         if not soup:
             continue
         cards = soup.select(".js-product-card, .product-item, [data-product]")
@@ -1015,10 +1021,12 @@ def scrape_starline(component):
                 round(price / qty, 6) if qty else price, href, in_stock,
                 title=title_text,
             )
-            # Expand volume discount tiers from the product page (Starline shows
-            # qty-break tables: 100ct=$26.29, 500ct=$24.98, 1000ct=$23.66, etc.)
-            tiers = expand_volume_tiers(href, base, component)
-            offers.extend(tiers)
+            # Expand volume discount tiers for count-unit components only
+            if component.get("qty_unit") == "count":
+                tiers = expand_volume_tiers(href, base, component)
+                offers.extend(tiers)
+            else:
+                offers.append(base)
     return offers
 
 

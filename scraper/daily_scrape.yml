@@ -9,7 +9,7 @@ jobs:
   scrape:
     name: Scrape & Update Prices
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 75     # was 30 — Playwright ~20s/vendor, ~40 components × 3 vendors needs headroom
 
     steps:
       - name: Checkout repo
@@ -35,6 +35,7 @@ jobs:
           SMTP_PASS:             ${{ secrets.SMTP_PASS }}
           ALERT_EMAIL:           ${{ secrets.ALERT_EMAIL }}
           EBAY_APP_ID:           ${{ secrets.EBAY_APP_ID }}
+          EBAY_CERT_ID:          ${{ secrets.EBAY_CERT_ID }}
         run: python scraper.py
 
       - name: Upload scraper log
