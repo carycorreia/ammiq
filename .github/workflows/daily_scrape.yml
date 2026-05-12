@@ -41,6 +41,8 @@ jobs:
           ALERT_EMAIL_FROM:     ${{ secrets.ALERT_EMAIL_FROM }}
           ALERT_EMAIL_TO:       ${{ secrets.ALERT_EMAIL_TO }}
           ALERT_EMAIL_PASS:     ${{ secrets.ALERT_EMAIL_PASS }}
+          EBAY_APP_ID:          ${{ secrets.EBAY_APP_ID }}
+          EBAY_CERT_ID:         ${{ secrets.EBAY_CERT_ID }}
         run: |
           python scraper.py
 
