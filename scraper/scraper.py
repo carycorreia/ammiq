@@ -1347,7 +1347,7 @@ def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=
         "powders":      80.0,   # Vihtavuori tops out ~$70/lb
         "primers":       0.25,  # match-grade primers ~$0.12-0.18/ea
         "brass":        10.0,   # per case
-        "factory_ammo":  3.0,   # per round
+        "factory_ammo":  1.50,  # $/round — premium defensive is ~$0.80-1.20, $1.50 gives headroom
         "coatings":     50.0,   # per lb
     }
     _ceil = _CEIL.get(category, 0)
@@ -1359,7 +1359,15 @@ def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=
                 log.debug(f"  Price ceiling ${_ceil}/unit dropped {_dropped} offer(s)")
             in_stock = _ceiled
         else:
-            log.warning(f"  Price ceiling ${_ceil}/unit would drop ALL offers — keeping originals")
+            # All offers exceed ceiling — scraper returned garbage data (e.g. LG changed
+            # page layout, returning case prices instead of per-box). Write nothing rather
+            # than storing a wildly wrong price.
+            log.warning(
+                f"  Price ceiling ${_ceil}/unit would drop ALL {len(in_stock)} offer(s) "
+                f"(cheapest was ${min(o.per_unit for o in in_stock):.4f}/unit) — "
+                f"skipping {comp_name} to avoid poisoning Firebase"
+            )
+            return None
 
     best     = min(in_stock, key=lambda o: o.per_unit)
     snapshot = {

@@ -535,8 +535,8 @@ function card(c){
     <button class="pc-alert-bell ${bellActive}" title="${thresh?'Alert set: $'+thresh.toFixed(4)+'/'+c.best_unit:'Set price alert'}" onclick="event.stopPropagation();quickSetAlert('${c.component_id}','${c.component_name||c.name||''}','${c.best_unit||'unit'}')">${thresh?'🔔':'🔕'}</button>
     <div class="pc-header"><div><div class="pc-name">${c.component_name||c.name}</div><div class="pc-cat">${cat.replace('_',' ')}</div></div><div class="alert-badge ab-${al}">${atxt}</div></div>
     ${targetBadge}
-    <div class="pc-price"><div class="pc-price-big">${fp(c.best_per_unit)}</div><div class="pc-price-unit">/ ${c.best_unit||''}</div></div>
-    ${(()=>{const q=parseFloat(c.best_qty)||1,p=parseFloat(c.best_price)||0;return q>1.5?`<div style="font-size:11px;color:var(--text3);margin:-4px 0 6px;font-family:var(--font-mono);">${Math.round(q)}${c.best_unit||''} lot · $${p.toFixed(2)} total</div>`:'';})()}
+    <div class="pc-price"><div class="pc-price-big">${fp(c.best_per_unit)}</div><div class="pc-price-unit">/ ${cat==='factory_ammo'?'rd':c.best_unit||''}</div></div>
+    ${(()=>{const q=parseFloat(c.best_qty)||1,p=parseFloat(c.best_price)||0,isAmmo=cat==='factory_ammo';if(isAmmo&&c.best_per_unit){const boxPrice=(c.best_per_unit*(parseFloat(c.best_unit)||50));return`<div style="font-size:11px;color:var(--text3);margin:-4px 0 6px;font-family:var(--font-mono);">$${boxPrice.toFixed(2)} / ${c.best_unit||50}-rd box</div>`;}return q>1.5?`<div style="font-size:11px;color:var(--text3);margin:-4px 0 6px;font-family:var(--font-mono);">${Math.round(q)}${c.best_unit||''} lot · $${p.toFixed(2)} total</div>`:'';})()}
     <div class="pc-vendor">${c.best_vendor||'—'}${c.best_url?` · <a href="${c.best_url}" target="_blank" onclick="event.stopPropagation()">Buy →</a>`:''}</div>
     <div class="trend-row"><span>7d: ${tH(c.trend_7d)}</span><span>30d: ${tH(c.trend_30d)}</span></div>${spark}
   </div>`;
