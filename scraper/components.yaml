@@ -581,11 +581,24 @@ factory_ammo:
     title_require_any:
       - "wolf match"
       - "wolf match target"
+      - "wolf match extra"
+      - "wolf .22"
+      - "wolf 22"
       - "22mt"
     title_reject:
       - "pellet"
       - "airgun"
       - "bb"
+      - "9mm"
+      - "45 acp"
+      - "38 special"
+      - "7.62"
+      - "5.56"
+      - ".223"
+      - "223 rem"
+      - ".308"
+      - "308 win"
+      - "380"
 
   # 38 Special
   - id: federal_38spl_130
