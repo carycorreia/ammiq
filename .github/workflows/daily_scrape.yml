@@ -43,6 +43,8 @@ jobs:
           ALERT_EMAIL_PASS:     ${{ secrets.ALERT_EMAIL_PASS }}
           EBAY_APP_ID:          ${{ secrets.EBAY_APP_ID }}
           EBAY_CERT_ID:         ${{ secrets.EBAY_CERT_ID }}
+          FIRST_EMAIL:          ${{ secrets.FIRST_EMAIL }}
+          FIRST_PASSWORD:       ${{ secrets.FIRST_PASSWORD }}
         run: |
           python scraper.py
 

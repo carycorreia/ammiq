@@ -63,6 +63,161 @@ DELAY        = 2.5
 TIMEOUT      = 18
 TODAY        = datetime.date.today().isoformat()
 
+# ── Warehouse sync (practical-pewologist Firebase) ─────────────────
+# The scraper reads warehouse_factory_ammo from the F.I.R.S.T. project
+# via the Firestore REST API so that any factory ammo added to the
+# warehouse is automatically price-tracked on the next daily run.
+FIRST_PROJECT = "practical-pewologist"
+FIRST_API_KEY = "AIzaSyBTbI56PJm__N3duWmYaeVi7DB0lbHSVYI"
+
+_CALIBER_NORM = {
+    "9mm": "9mm", "9x19": "9mm", "9 mm": "9mm",
+    "22lr": "22lr", "22 lr": "22lr", ".22lr": "22lr",
+    "22long rifle": "22lr", "22longrifle": "22lr",
+    "45acp": "45acp", "45 acp": "45acp", "45auto": "45acp",
+    ".45acp": "45acp", ".45 acp": "45acp",
+    "38spl": "38spl", "38special": "38spl", "38 special": "38spl",
+    ".38special": "38spl", ".38 special": "38spl",
+    "357mag": "357mag", "357magnum": "357mag", "357 magnum": "357mag",
+    ".357mag": "357mag",
+}
+
+def _norm_caliber(raw: str) -> str:
+    return _CALIBER_NORM.get(raw.strip().lower().replace(" ", ""), raw.strip().lower())
+
+def _fv(fields: dict, key: str, default=""):
+    """Extract a scalar value from a Firestore REST API fields dict."""
+    v = fields.get(key, {})
+    return (
+        v.get("stringValue")
+        or str(int(v["integerValue"])) if "integerValue" in v else None
+        or str(v.get("doubleValue", ""))
+        or default
+    )
+
+def _get_first_id_token() -> Optional[str]:
+    """
+    Sign in to the practical-pewologist Firebase app with the email/password
+    stored in FIRST_EMAIL / FIRST_PASSWORD env vars and return an ID token
+    for authenticated Firestore reads.  Returns None if credentials are
+    missing or auth fails — the caller will fall back to unauthenticated.
+    """
+    email    = os.environ.get("FIRST_EMAIL", "").strip()
+    password = os.environ.get("FIRST_PASSWORD", "").strip()
+    if not email or not password:
+        log.debug("Warehouse sync: FIRST_EMAIL/FIRST_PASSWORD not set — trying unauthenticated")
+        return None
+    try:
+        auth_url = (
+            f"https://identitytoolkit.googleapis.com/v1/accounts"
+            f":signInWithPassword?key={FIRST_API_KEY}"
+        )
+        resp = requests.post(
+            auth_url,
+            json={"email": email, "password": password, "returnSecureToken": True},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        token = resp.json().get("idToken")
+        if token:
+            log.info("Warehouse sync: authenticated with F.I.R.S.T. Firebase ✓")
+        return token
+    except Exception as e:
+        log.warning(f"Warehouse sync: Firebase auth failed ({e}) — trying unauthenticated")
+        return None
+
+
+def load_warehouse_factory_ammo(existing_ids: set) -> list:
+    """
+    Pull warehouse_factory_ammo docs from the practical-pewologist Firestore
+    project via the REST API and return component dicts for any items not
+    already in components.yaml.  Fails silently so the main scrape is never
+    blocked by a warehouse connectivity issue.
+    """
+    id_token = _get_first_id_token()
+    req_headers = dict(HEADERS)
+    if id_token:
+        req_headers["Authorization"] = f"Bearer {id_token}"
+
+    url = (
+        f"https://firestore.googleapis.com/v1/projects/{FIRST_PROJECT}"
+        f"/databases/(default)/documents/warehouse_factory_ammo"
+        f"?key={FIRST_API_KEY}"
+    )
+    try:
+        resp = requests.get(url, timeout=10, headers=req_headers)
+        if resp.status_code == 403 and id_token is None:
+            log.warning(
+                "Warehouse sync: Firestore returned 403 — security rules require auth. "
+                "Add FIRST_EMAIL and FIRST_PASSWORD to GitHub Actions secrets."
+            )
+            return []
+        resp.raise_for_status()
+        docs = resp.json().get("documents", [])
+    except Exception as e:
+        log.warning(f"Warehouse sync: REST API unreachable ({e}) — skipping")
+        return []
+
+    new_comps = []
+    for doc in docs:
+        doc_id = doc.get("name", "").split("/")[-1]
+        fields = doc.get("fields", {})
+
+        name    = _fv(fields, "name")
+        brand   = _fv(fields, "brand")
+        cal_raw = _fv(fields, "caliber")
+        grain_s = _fv(fields, "grain", "0")
+        try:
+            grain = int(float(grain_s))
+        except (ValueError, TypeError):
+            grain = 0
+
+        if not name or not cal_raw:
+            log.debug(f"Warehouse sync: skipping doc '{doc_id}' — missing name/caliber")
+            continue
+
+        caliber  = _norm_caliber(cal_raw)
+        comp_id  = f"wh_{re.sub(r'[^a-z0-9]', '_', doc_id.lower())}"[:48]
+
+        if comp_id in existing_ids or any(
+            c.get("name", "").lower() == name.lower() for c in []
+        ):
+            log.debug(f"Warehouse sync: '{name}' already tracked — skipping")
+            continue
+
+        # Build search terms and title guards from available metadata
+        grain_str = f"{grain}gr" if grain else ""
+        search_terms = [f"{brand} {cal_raw} {grain_str}".strip()]
+        if name:
+            search_terms.append(name[:80])
+
+        brand_words = [w for w in brand.lower().split() if len(w) > 2] if brand else []
+        title_require_any = list(dict.fromkeys(brand_words + [cal_raw.lower()]))[:5]
+
+        LG_SUPPORTED = {"9mm", "45acp", "38spl", "357mag", "22lr"}
+        vendors = (["lucky_gunner", "target_sports", "ammoseek"]
+                   if caliber in LG_SUPPORTED
+                   else ["target_sports", "ammoseek"])
+
+        comp = {
+            "id":              comp_id,
+            "name":            name,
+            "caliber":         caliber,
+            "grain":           grain,
+            "brand":           brand,
+            "unit":            "50",
+            "qty_unit":        "count",
+            "no_reload":       True,
+            "vendors":         vendors,
+            "search_terms":    search_terms,
+            "title_require_any": title_require_any,
+            "_from_warehouse": True,
+        }
+        new_comps.append(comp)
+        log.info(f"Warehouse sync: queuing '{name}' for price scrape")
+
+    return new_comps
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -1331,6 +1486,17 @@ def run_scraper():
         "coatings":     config.get("coatings",      []),
         "factory_ammo": config.get("factory_ammo",  []),
     }
+
+    # ── Warehouse sync ─────────────────────────────────────────────
+    # Pull any factory ammo from the F.I.R.S.T. warehouse that isn't
+    # already covered by components.yaml and add it to this run's targets.
+    existing_factory_ids = {c["id"] for c in cats["factory_ammo"]}
+    wh_comps = load_warehouse_factory_ammo(existing_factory_ids)
+    if wh_comps:
+        log.info(f"Warehouse sync: +{len(wh_comps)} new target(s) added to factory_ammo")
+        cats["factory_ammo"].extend(wh_comps)
+    else:
+        log.info("Warehouse sync: no new factory ammo to add")
 
     if args.category:
         cats = {k: v for k, v in cats.items() if k == args.category}

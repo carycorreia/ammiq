@@ -564,6 +564,29 @@ factory_ammo:
     search_terms:
       - "Federal AutoMatch 22LR 325 round"
 
+  - id: wolf_match_22lr
+    name: "Wolf Match Target 22 LR 40gr LRN"
+    caliber: 22lr
+    grain: 40
+    brand: Wolf
+    type: LRN
+    unit: "500"
+    qty_unit: count
+    no_reload: true
+    vendors: [lucky_gunner, target_sports, ammoseek]
+    search_terms:
+      - "Wolf Match Target 22LR 40gr 500"
+      - "Wolf Match Target 22 Long Rifle 40gr"
+      - "22MT 500 round"
+    title_require_any:
+      - "wolf match"
+      - "wolf match target"
+      - "22mt"
+    title_reject:
+      - "pellet"
+      - "airgun"
+      - "bb"
+
   # 38 Special
   - id: federal_38spl_130
     name: "Federal 38 Special 130gr FMJ"
