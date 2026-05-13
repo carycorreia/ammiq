@@ -482,8 +482,11 @@ async function init(){
 async function load(){
   document.getElementById('lu-txt').textContent='Loading…';
   try{
-    const snap=await getDocs(collection(db,'prices'));ALL={};
-    snap.forEach(d=>{const _d=d.data();if(!_d.component_id)_d.component_id=d.id;ALL[d.id]=_d;});
+    // Seed ALL with component stubs first so cards with no Firebase data still render
+    // (caliber, grain, wolf_match_22lr etc.). Firebase data is then merged on top.
+    loadDemo();
+    const snap=await getDocs(collection(db,'prices'));
+    snap.forEach(d=>{const _d=d.data();if(!_d.component_id)_d.component_id=d.id;ALL[d.id]=Object.assign({},ALL[d.id]||{},_d);});
     for(const id of Object.keys(ALL)){try{const hs=await getDocs(query(collection(db,'prices',id,'history'),orderBy('date','desc'),limit(90)));HIST[id]=hs.docs.map(d=>d.data());}catch(e){HIST[id]=[];}}
     const latest=Object.values(ALL).map(p=>p.last_updated).filter(Boolean).sort().pop();
     document.getElementById('lu-txt').textContent=latest?'Updated '+latest:'No data yet';
@@ -502,12 +505,27 @@ function loadDemo(){
     lyman_2:{component_id:'lyman_2',component_name:'Lyman #2 Alloy /lb',best_per_unit:2.85,best_unit:'lb',best_vendor:'Rotometals',alert:'hold',trend_7d:2.1,trend_30d:5.4,category:'metals'},
     brass_9mm:{component_id:'brass_9mm',component_name:'9mm Brass /500',best_per_unit:0.145,best_unit:'500',best_vendor:'Starline',alert:'hold',trend_7d:0.0,trend_30d:2.1,category:'brass'},
     hitek:{component_id:'hitek',component_name:'Hi-Tek Coating /lb',best_per_unit:22.99,best_unit:'lb',best_vendor:'Magnus Bullets',alert:'hold',trend_7d:0.0,trend_30d:0.0,category:'coatings'},
-    blazer_9mm_115:{component_id:'blazer_9mm_115',component_name:'Blazer Brass 9mm 115gr',best_per_unit:0.336,best_unit:'50',best_vendor:'Lucky Gunner',alert:'hold',trend_7d:-1.0,trend_30d:-4.2,category:'factory_ammo',caliber:'9mm',grain:115},
-    sb_9mm_124:{component_id:'sb_9mm_124',component_name:'S&B 9mm 124gr FMJ',best_per_unit:0.368,best_unit:'50',best_vendor:'Target Sports',alert:'hold',trend_7d:2.1,trend_30d:1.8,category:'factory_ammo',caliber:'9mm',grain:124},
-    federal_9mm_115:{component_id:'federal_9mm_115',component_name:'Federal AE 9mm 115gr',best_per_unit:0.312,best_unit:'50',best_vendor:'Lucky Gunner',alert:'buy',trend_7d:-4.1,trend_30d:-7.2,category:'factory_ammo',caliber:'9mm',grain:115},
-    blazer_45acp:{component_id:'blazer_45acp',component_name:'Blazer Brass 45 ACP 230gr',best_per_unit:0.428,best_unit:'50',best_vendor:'Lucky Gunner',alert:'hold',trend_7d:0.5,trend_30d:3.2,category:'factory_ammo',caliber:'45acp',grain:230},
-    cci_22lr:{component_id:'cci_22lr',component_name:'CCI Std 22LR 40gr /50',best_per_unit:0.068,best_unit:'50',best_vendor:'Target Sports',alert:'hold',trend_7d:1.0,trend_30d:2.5,category:'factory_ammo',caliber:'22lr',grain:40},
+    // ── Factory ammo stubs — IDs must match components.yaml exactly ───────────
+    // These are seed data only; Firebase merge overwrites with real prices.
+    // Caliber/grain are preserved here so the UI can filter even before Firebase writes.
+    blazer_9mm_115:{component_id:'blazer_9mm_115',component_name:'Blazer Brass 9mm 115gr FMJ',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'9mm',grain:115},
+    blazer_9mm_124:{component_id:'blazer_9mm_124',component_name:'Blazer Brass 9mm 124gr FMJ',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'9mm',grain:124},
+    sb_9mm_115:{component_id:'sb_9mm_115',component_name:'S&B 9mm 115gr FMJ',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'9mm',grain:115},
+    sb_9mm_124:{component_id:'sb_9mm_124',component_name:'S&B 9mm 124gr FMJ',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'9mm',grain:124},
+    federal_9mm_115:{component_id:'federal_9mm_115',component_name:'Federal AE 9mm 115gr FMJ',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'9mm',grain:115},
+    winchester_9mm_115:{component_id:'winchester_9mm_115',component_name:'Winchester USA 9mm 115gr FMJ',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'9mm',grain:115},
+    fiocchi_9mm_115:{component_id:'fiocchi_9mm_115',component_name:'Fiocchi 9mm 115gr FMJ',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'9mm',grain:115},
+    sig_9mm_124:{component_id:'sig_9mm_124',component_name:'Sig Sauer 9mm 124gr FMJ',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'9mm',grain:124},
+    wolf_9mm_115:{component_id:'wolf_9mm_115',component_name:'Wolf 9mm 115gr FMJ',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'9mm',grain:115},
+    cci_22lr_std:{component_id:'cci_22lr_std',component_name:'CCI Standard 22 LR 40gr /50',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'22lr',grain:40},
+    federal_22lr:{component_id:'federal_22lr',component_name:'Federal AutoMatch 22 LR /325',best_per_unit:null,best_unit:'325',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'22lr',grain:40},
     wolf_match_22lr:{component_id:'wolf_match_22lr',component_name:'Wolf Match Target 22 LR 40gr /500',best_per_unit:null,best_unit:'500',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'22lr',grain:40},
+    federal_38spl_130:{component_id:'federal_38spl_130',component_name:'Federal 38 Special 130gr FMJ',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'38spl',grain:130},
+    winchester_38spl:{component_id:'winchester_38spl',component_name:'Winchester USA 38 Special 130gr FMJ',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'38spl',grain:130},
+    federal_357_158:{component_id:'federal_357_158',component_name:'Federal 357 Magnum 158gr JSP',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'357mag',grain:158},
+    blazer_45acp_230:{component_id:'blazer_45acp_230',component_name:'Blazer Brass 45 ACP 230gr FMJ',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'45acp',grain:230},
+    federal_ae_45acp_230:{component_id:'federal_ae_45acp_230',component_name:'Federal AE 45 ACP 230gr FMJ',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'45acp',grain:230},
+    winchester_45acp_230:{component_id:'winchester_45acp_230',component_name:'Winchester USA 45 ACP 230gr FMJ',best_per_unit:null,best_unit:'50',best_vendor:null,alert:'hold',trend_7d:null,trend_30d:null,category:'factory_ammo',caliber:'45acp',grain:230},
   };
   ['titegroup','cci_sp','raw_lead','brass_9mm'].forEach(id=>{
     const base=ALL[id].best_per_unit;

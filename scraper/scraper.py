@@ -617,11 +617,17 @@ def fetch_js(url: str, wait_selector: str = None, wait_ms: int = 4000) -> Option
     return asyncio.run(_fetch_js(url, wait_selector, wait_ms))
 
 def price_anchor_offers(soup, vendor_name, component, link_domain,
-                        price_selector=None, link_pattern=None, max_results=5):
+                        price_selector=None, link_pattern=None, max_results=5,
+                        qty_from_container=False):
     """
     Find products by locating price elements and walking up the DOM to find
     the nearest ancestor containing a product link. Used for sites with
     non-standard product card markup (Grafs, Lucky Gunner).
+
+    qty_from_container=True: try to parse the actual round/unit count from the
+    product card text (e.g. "1000 Rounds") instead of assuming the component's
+    configured unit. Fixes LG category pages that show case prices ($235/1000)
+    when the component is configured as unit:"50".
     """
     offers = []
     seen   = set()
@@ -662,10 +668,17 @@ def price_anchor_offers(soup, vendor_name, component, link_domain,
             continue
         seen.add(href)
 
-        qty = get_qty(component)
+        # Determine quantity: optionally read from page text (catches case vs box pricing)
+        if qty_from_container:
+            card_text = container.get_text(" ", strip=True)
+            parsed_qty = parse_count_qty(card_text)
+            qty = parsed_qty if parsed_qty >= 10 else get_qty(component)
+        else:
+            qty = get_qty(component)
+
         offers.append(PriceOffer(
             vendor_name, price, qty,
-            str(component.get("unit", "1")),
+            str(int(qty)) if qty_from_container else str(component.get("unit", "1")),
             round(price / qty, 6) if qty else price,
             href,
         ))
@@ -845,6 +858,7 @@ def scrape_lucky_gunner(component):
         price_selector="span.price, span.regular-price",
         link_pattern=r"luckygunner\.com/",
         max_results=8,
+        qty_from_container=True,   # LG category pages mix box & case pricing; read qty from card text
     )
 
     # Filter to products matching the tracked brand
@@ -1380,6 +1394,11 @@ def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=
         "all_offers":     [asdict(o) for o in sorted(offers, key=lambda x: x.per_unit)],
         **trends,
     }
+    # Persist component metadata so the UI can filter/display correctly
+    if component:
+        for fld in ("caliber", "grain", "brand", "type", "no_reload"):
+            if fld in component:
+                snapshot[fld] = component[fld]
     if dry_run:
         log.info(f"  [DRY RUN] {comp_name}: ${best.per_unit:.4f}/{best.unit} "
                  f"@ {best.vendor} | alert={trends.get('alert')}")
