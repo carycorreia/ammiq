@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Ammo Radar — Daily Price Harvester v2.7
+Ammo Radar — Daily Price Harvester v2.8
 Playwright + email alerts + dry-run mode.
 
 Usage:
@@ -11,6 +11,12 @@ Usage:
   python scraper.py --no-email            # suppress alert emails
 
 Changelog:
+  v2.8 — Lucky Gunner CPR-direct: scrape_lucky_gunner now reads LG's inline
+          "(23.3¢ per round)" text directly from each card, avoiding the
+          case-price÷component-unit math that produced $4.66/rd for 1000-rd
+          cases. Three-tier fallback: (1) CPR CSS selectors, (2) regex scan of
+          card text, (3) smart divisor (1000/500/250…) as last resort.
+          Added parse_cpr_text() helper: handles "23.3¢", "cents", "$0.233/rd".
   v2.6 — Title validation: validate_title() checks title_require_any, title_reject,
           title_must_also_contain_any from components.yaml for ALL vendors post-fetch.
           Qty routing: qty_unit:"count" uses parse_count_qty() for brass/primers/projectiles
@@ -741,44 +747,191 @@ def scrape_midsouth(component):
     return offers
 
 
+def parse_cpr_text(text: str) -> Optional[float]:
+    """
+    Extract per-round price from text like:
+      "(23.3¢ per round)"  → 0.233
+      "$0.233 per round"   → 0.233
+      "23.3 cents/rd"      → 0.233
+      "¢0.233/round"       → not matched (unusual)
+    Returns None if no match.
+    """
+    if not text:
+        return None
+    # cents pattern: "23.3¢", "23.3 cents", "23.3c per round"
+    m = re.search(r'(\d+\.?\d*)\s*[¢¢]\s*(?:per\s*round|/\s*r(?:oun?d?)?)?', text, re.IGNORECASE)
+    if m:
+        val = round(float(m.group(1)) / 100, 6)
+        if 0.01 <= val <= 2.00:
+            return val
+    m = re.search(r'(\d+\.?\d*)\s*cents?\s*(?:per\s*round|/\s*r(?:oun?d?)?)?', text, re.IGNORECASE)
+    if m:
+        val = round(float(m.group(1)) / 100, 6)
+        if 0.01 <= val <= 2.00:
+            return val
+    # dollar pattern: "$0.233/round", "$0.23 per round"
+    m = re.search(r'\$\s*(\d+\.\d+)\s*(?:per\s*round|/\s*r(?:oun?d?)?)', text, re.IGNORECASE)
+    if m:
+        val = round(float(m.group(1)), 6)
+        if 0.01 <= val <= 2.00:
+            return val
+    return None
+
+
 def scrape_lucky_gunner(component):
     """
     Lucky Gunner — JS-rendered, Playwright. Caliber category pages only.
-    No search endpoint exists. Only works for components with a 'caliber' field.
-    Price elements: span.price and span.regular-price (confirmed via diagnostic).
+
+    v2.8 CPR-direct: LG shows "(23.3¢ per round)" next to the total price on
+    every listing. We read that element directly as per_unit instead of doing
+    case_price ÷ qty math (which fails when the page shows a 1000-rd case price
+    but our component unit is 50 → $4.66/rd instead of $0.23/rd).
+
+    Strategy:
+      1. For each span.price in the page, walk up the DOM to find the card.
+      2. Within the card, search for CPR text ("¢ per round" / "$ per round").
+      3. Apply brand/caliber/title filters.
+      4. If no CPR found in card, fall back to total_price ÷ parsed_qty with
+         smart-divisor correction (same as price_anchor_offers v2.7).
     """
-    caliber = component.get("caliber", "")
-    if not caliber:
+    caliber_key = component.get("caliber", "")
+    if not caliber_key:
         log.warning("  Lucky Gunner skipped — no 'caliber' field (LG only carries factory ammo)")
         return []
 
-    url = LG_CALIBER_URLS.get(caliber)
+    url = LG_CALIBER_URLS.get(caliber_key)
     if not url:
-        log.warning(f"  Lucky Gunner: no URL mapped for caliber '{caliber}'")
+        log.warning(f"  Lucky Gunner: no URL mapped for caliber '{caliber_key}'")
         return []
 
     log.info(f"  Lucky Gunner (Playwright): {url}")
-    soup = fetch_js(url, wait_selector="span.price, span.regular-price", wait_ms=3000)
+    soup = fetch_js(url, wait_selector="span.price, span.regular-price", wait_ms=3500)
     if not soup:
         return []
 
-    brand = component.get("brand", "").lower()
-    kws   = set()
-    for term in component.get("search_terms", []):
-        kws |= keywords_for(term)
-    if brand:
-        kws.add(brand.lower())
+    brand    = (component.get("brand") or "").lower()
+    caliber  = caliber_key.lower()
+    category = component.get("_category", "factory_ammo")
 
-    offers = price_anchor_offers(
-        soup, "Lucky Gunner", component,
-        link_domain="https://www.luckygunner.com",
-        price_selector="span.price, span.regular-price",
-        link_pattern=r"luckygunner\.com/",
-        max_results=8,
-    )
+    # Pre-build caliber variant set for flexible matching
+    cal_variants = {
+        caliber,
+        caliber.replace("lr", "long rifle"),
+        caliber.replace("acp", "auto"),
+        caliber.replace("spl", "special"),
+        caliber.replace("mag", "magnum"),
+    }
 
-    # price_anchor_offers already filters by brand in title; return what it found
-    return offers[:5]
+    # Known CPR CSS selectors on LG (try all; LG has changed markup over time)
+    _CPR_SELECTORS = [
+        ".price-per-round", ".cpr", ".cost-per-round", ".per-round",
+        "[class*='per-round']", "[class*='per_round']", "[class*='unit-price']",
+        "[class*='unitprice']", ".price-each", ".each-price", ".round-price",
+    ]
+
+    offers = []
+    seen   = set()
+
+    for price_el in soup.select("span.price, span.regular-price"):
+        total_price = parse_price(price_el.get_text())
+        if not total_price:
+            continue
+
+        # ── Walk up DOM to find card container with a LG product link ───────
+        container = price_el
+        link_el   = None
+        for _ in range(12):
+            container = container.parent
+            if not container or container.name in ("html", "body", "[document]"):
+                break
+            candidates = container.find_all("a", href=re.compile(r"luckygunner\.com/"))
+            if candidates:
+                link_el = candidates[0]
+                break
+
+        if not link_el:
+            continue
+
+        href = link_el["href"]
+        if not href.startswith("http"):
+            href = "https://www.luckygunner.com/" + href.lstrip("/")
+        if href in seen:
+            continue
+
+        # ── Title + brand / caliber / yaml filter ───────────────────────────
+        title_text = _extract_title(container) or link_el.get_text(" ", strip=True)
+        title_low  = title_text.lower()
+        title_norm = title_low.replace("-", "").replace(" ", "")
+
+        if brand and brand not in title_low:
+            log.debug(f"  Lucky Gunner: skip (brand '{brand}') — {title_text[:60]}")
+            continue
+
+        if caliber and not any(v in title_norm or v in title_low for v in cal_variants):
+            log.debug(f"  Lucky Gunner: skip (caliber '{caliber}') — {title_text[:60]}")
+            continue
+
+        if not validate_title(title_text, component):
+            log.debug(f"  Lucky Gunner: skip (validate_title) — {title_text[:60]}")
+            continue
+
+        # ── Attempt 1: CPR CSS selectors ────────────────────────────────────
+        per_unit = None
+        for sel in _CPR_SELECTORS:
+            el = container.select_one(sel)
+            if el:
+                cpr = parse_cpr_text(el.get_text(" ", strip=True))
+                if cpr:
+                    per_unit = cpr
+                    log.info(f"  Lucky Gunner: CPR via '{sel}' = ${cpr:.4f}/rd — {title_text[:50]}")
+                    break
+
+        # ── Attempt 2: regex scan of all card text for "¢ per round" ────────
+        if not per_unit:
+            cpr = parse_cpr_text(container.get_text(" ", strip=True))
+            if cpr:
+                per_unit = cpr
+                log.info(f"  Lucky Gunner: CPR from card text = ${cpr:.4f}/rd — {title_text[:50]}")
+
+        # ── Attempt 3: total_price ÷ qty with smart divisor (fallback) ──────
+        if not per_unit:
+            parsed_qty = parse_count_qty(title_text)
+            if not parsed_qty or parsed_qty <= 1:
+                m2 = re.search(r'[-/](\d{2,5})-rounds?', href, re.IGNORECASE)
+                parsed_qty = int(m2.group(1)) if m2 else 0
+            qty = parsed_qty if parsed_qty and parsed_qty > 1 else get_qty(component)
+            per_unit = round(total_price / qty, 6) if qty else total_price
+
+            if not sanity_per_unit(per_unit, category):
+                corrected = False
+                for pack in (1000, 500, 250, 200, 100, 75):
+                    candidate = round(total_price / pack, 6)
+                    if sanity_per_unit(candidate, category):
+                        log.info(f"  Lucky Gunner: smart-divisor ${total_price}/{pack} "
+                                 f"= ${candidate:.4f}/rd (was {qty}) — {title_text[:40]}")
+                        per_unit = candidate
+                        corrected = True
+                        break
+                if not corrected:
+                    log.debug(f"  Lucky Gunner: all fallbacks failed, skip — {title_text[:50]}")
+                    continue
+
+        # ── Final sanity gate ────────────────────────────────────────────────
+        if not sanity_per_unit(per_unit, category):
+            log.debug(f"  Lucky Gunner: per_unit ${per_unit:.4f} outside sanity — {title_text[:50]}")
+            continue
+
+        seen.add(href)
+        offers.append(PriceOffer(
+            "Lucky Gunner", total_price, get_qty(component),
+            str(component.get("unit", "1")),
+            per_unit, href,
+        ))
+        if len(offers) >= 5:
+            break
+
+    log.info(f"  Lucky Gunner: {len(offers)} offer(s) for '{component.get('id', '?')}'")
+    return offers
 
 
 def scrape_ammoseek(component):
