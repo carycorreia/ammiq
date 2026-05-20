@@ -63,161 +63,6 @@ DELAY        = 2.5
 TIMEOUT      = 18
 TODAY        = datetime.date.today().isoformat()
 
-# ── Warehouse sync (practical-pewologist Firebase) ─────────────────
-# The scraper reads warehouse_factory_ammo from the F.I.R.S.T. project
-# via the Firestore REST API so that any factory ammo added to the
-# warehouse is automatically price-tracked on the next daily run.
-FIRST_PROJECT = "practical-pewologist"
-FIRST_API_KEY = "AIzaSyBTbI56PJm__N3duWmYaeVi7DB0lbHSVYI"
-
-_CALIBER_NORM = {
-    "9mm": "9mm", "9x19": "9mm", "9 mm": "9mm",
-    "22lr": "22lr", "22 lr": "22lr", ".22lr": "22lr",
-    "22long rifle": "22lr", "22longrifle": "22lr",
-    "45acp": "45acp", "45 acp": "45acp", "45auto": "45acp",
-    ".45acp": "45acp", ".45 acp": "45acp",
-    "38spl": "38spl", "38special": "38spl", "38 special": "38spl",
-    ".38special": "38spl", ".38 special": "38spl",
-    "357mag": "357mag", "357magnum": "357mag", "357 magnum": "357mag",
-    ".357mag": "357mag",
-}
-
-def _norm_caliber(raw: str) -> str:
-    return _CALIBER_NORM.get(raw.strip().lower().replace(" ", ""), raw.strip().lower())
-
-def _fv(fields: dict, key: str, default=""):
-    """Extract a scalar value from a Firestore REST API fields dict."""
-    v = fields.get(key, {})
-    return (
-        v.get("stringValue")
-        or str(int(v["integerValue"])) if "integerValue" in v else None
-        or str(v.get("doubleValue", ""))
-        or default
-    )
-
-def _get_first_id_token() -> Optional[str]:
-    """
-    Sign in to the practical-pewologist Firebase app with the email/password
-    stored in FIRST_EMAIL / FIRST_PASSWORD env vars and return an ID token
-    for authenticated Firestore reads.  Returns None if credentials are
-    missing or auth fails — the caller will fall back to unauthenticated.
-    """
-    email    = os.environ.get("FIRST_EMAIL", "").strip()
-    password = os.environ.get("FIRST_PASSWORD", "").strip()
-    if not email or not password:
-        log.debug("Warehouse sync: FIRST_EMAIL/FIRST_PASSWORD not set — trying unauthenticated")
-        return None
-    try:
-        auth_url = (
-            f"https://identitytoolkit.googleapis.com/v1/accounts"
-            f":signInWithPassword?key={FIRST_API_KEY}"
-        )
-        resp = requests.post(
-            auth_url,
-            json={"email": email, "password": password, "returnSecureToken": True},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        token = resp.json().get("idToken")
-        if token:
-            log.info("Warehouse sync: authenticated with F.I.R.S.T. Firebase ✓")
-        return token
-    except Exception as e:
-        log.warning(f"Warehouse sync: Firebase auth failed ({e}) — trying unauthenticated")
-        return None
-
-
-def load_warehouse_factory_ammo(existing_ids: set) -> list:
-    """
-    Pull warehouse_factory_ammo docs from the practical-pewologist Firestore
-    project via the REST API and return component dicts for any items not
-    already in components.yaml.  Fails silently so the main scrape is never
-    blocked by a warehouse connectivity issue.
-    """
-    id_token = _get_first_id_token()
-    req_headers = dict(HEADERS)
-    if id_token:
-        req_headers["Authorization"] = f"Bearer {id_token}"
-
-    url = (
-        f"https://firestore.googleapis.com/v1/projects/{FIRST_PROJECT}"
-        f"/databases/(default)/documents/warehouse_factory_ammo"
-        f"?key={FIRST_API_KEY}"
-    )
-    try:
-        resp = requests.get(url, timeout=10, headers=req_headers)
-        if resp.status_code == 403 and id_token is None:
-            log.warning(
-                "Warehouse sync: Firestore returned 403 — security rules require auth. "
-                "Add FIRST_EMAIL and FIRST_PASSWORD to GitHub Actions secrets."
-            )
-            return []
-        resp.raise_for_status()
-        docs = resp.json().get("documents", [])
-    except Exception as e:
-        log.warning(f"Warehouse sync: REST API unreachable ({e}) — skipping")
-        return []
-
-    new_comps = []
-    for doc in docs:
-        doc_id = doc.get("name", "").split("/")[-1]
-        fields = doc.get("fields", {})
-
-        name    = _fv(fields, "name")
-        brand   = _fv(fields, "brand")
-        cal_raw = _fv(fields, "caliber")
-        grain_s = _fv(fields, "grain", "0")
-        try:
-            grain = int(float(grain_s))
-        except (ValueError, TypeError):
-            grain = 0
-
-        if not name or not cal_raw:
-            log.debug(f"Warehouse sync: skipping doc '{doc_id}' — missing name/caliber")
-            continue
-
-        caliber  = _norm_caliber(cal_raw)
-        comp_id  = f"wh_{re.sub(r'[^a-z0-9]', '_', doc_id.lower())}"[:48]
-
-        if comp_id in existing_ids or any(
-            c.get("name", "").lower() == name.lower() for c in []
-        ):
-            log.debug(f"Warehouse sync: '{name}' already tracked — skipping")
-            continue
-
-        # Build search terms and title guards from available metadata
-        grain_str = f"{grain}gr" if grain else ""
-        search_terms = [f"{brand} {cal_raw} {grain_str}".strip()]
-        if name:
-            search_terms.append(name[:80])
-
-        brand_words = [w for w in brand.lower().split() if len(w) > 2] if brand else []
-        title_require_any = list(dict.fromkeys(brand_words + [cal_raw.lower()]))[:5]
-
-        LG_SUPPORTED = {"9mm", "45acp", "38spl", "357mag", "22lr"}
-        vendors = (["lucky_gunner", "target_sports", "ammoseek"]
-                   if caliber in LG_SUPPORTED
-                   else ["target_sports", "ammoseek"])
-
-        comp = {
-            "id":              comp_id,
-            "name":            name,
-            "caliber":         caliber,
-            "grain":           grain,
-            "brand":           brand,
-            "unit":            "50",
-            "qty_unit":        "count",
-            "no_reload":       True,
-            "vendors":         vendors,
-            "search_terms":    search_terms,
-            "title_require_any": title_require_any,
-            "_from_warehouse": True,
-        }
-        new_comps.append(comp)
-        log.info(f"Warehouse sync: queuing '{name}' for price scrape")
-
-    return new_comps
-
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -616,21 +461,54 @@ async def _fetch_js(url: str, wait_selector: str = None, wait_ms: int = 4000):
 def fetch_js(url: str, wait_selector: str = None, wait_ms: int = 4000) -> Optional[BeautifulSoup]:
     return asyncio.run(_fetch_js(url, wait_selector, wait_ms))
 
+# ── Per-unit sanity caps ($/unit). Offers outside these bounds are discarded. ──
+_SANITY_CAPS = {
+    "factory_ammo": (0.01, 2.00),   # $0.01–$2.00 per round
+    "primers":      (0.01, 0.30),   # $0.01–$0.30 each
+    "brass":        (0.01, 2.00),   # $0.01–$2.00 per case
+    "projectiles":  (0.01, 2.00),
+    "powder":       (10.0, 500.0),  # per lb
+    "metals":       (0.50, 30.0),   # per lb
+}
+
+def sanity_per_unit(per_unit: float, category: str) -> bool:
+    """Return True if per_unit is within a plausible range for the category."""
+    lo, hi = _SANITY_CAPS.get(category, (0.0, 1e9))
+    return lo <= per_unit <= hi
+
+
+def _extract_title(container) -> str:
+    """Pull product title text from a DOM container."""
+    for sel in ["h2", "h3", "h4", ".product-name", ".product-title",
+                ".item-name", "[class*='title']", "[class*='name']"]:
+        el = container.select_one(sel) if hasattr(container, "select_one") else None
+        if el:
+            return el.get_text(" ", strip=True)
+    # Fall back to the link text
+    a = container.find("a") if hasattr(container, "find") else None
+    return a.get_text(" ", strip=True) if a else ""
+
+
 def price_anchor_offers(soup, vendor_name, component, link_domain,
-                        price_selector=None, link_pattern=None, max_results=5,
-                        qty_from_container=False):
+                        price_selector=None, link_pattern=None, max_results=5):
     """
     Find products by locating price elements and walking up the DOM to find
     the nearest ancestor containing a product link. Used for sites with
     non-standard product card markup (Grafs, Lucky Gunner).
 
-    qty_from_container=True: try to parse the actual round/unit count from the
-    product card text (e.g. "1000 Rounds") instead of assuming the component's
-    configured unit. Fixes LG category pages that show case prices ($235/1000)
-    when the component is configured as unit:"50".
+    FIX v2.7:
+    - Extracts product title from each card container
+    - Filters by brand/caliber match in TITLE (not just URL)
+    - Parses round/unit count from title when qty_unit=count, overriding
+      the component's hardcoded unit value — fixes the $225/50 = $4.50/round bug
+    - Discards offers whose per_unit falls outside sanity caps
     """
-    offers = []
-    seen   = set()
+    offers   = []
+    seen     = set()
+    brand    = (component.get("brand") or "").lower()
+    caliber  = (component.get("caliber") or "").lower()
+    category = component.get("_category", "")
+    qty_unit = component.get("qty_unit", "")
 
     if price_selector:
         price_els = soup.select(price_selector)
@@ -668,19 +546,40 @@ def price_anchor_offers(soup, vendor_name, component, link_domain,
             continue
         seen.add(href)
 
-        # Determine quantity: optionally read from page text (catches case vs box pricing)
-        if qty_from_container:
-            card_text = container.get_text(" ", strip=True)
-            parsed_qty = parse_count_qty(card_text)
-            qty = parsed_qty if parsed_qty >= 10 else get_qty(component)
+        # ── Title extraction & brand/caliber filter ───────────────────────────
+        title_text = _extract_title(container) or link_el.get_text(" ", strip=True)
+        title_low  = title_text.lower()
+
+        if brand and brand not in title_low:
+            log.debug(f"  {vendor_name}: skip (brand mismatch) — {title_text[:60]}")
+            continue
+        if caliber and caliber not in title_low.replace("-", "").replace(" ", ""):
+            # allow "9mm" to match "9 mm", "22lr" to match "22 long rifle" etc
+            cal_variants = {caliber, caliber.replace("lr","long rifle"),
+                            caliber.replace("acp","auto"), caliber.replace("spl","special")}
+            if not any(v in title_low for v in cal_variants):
+                log.debug(f"  {vendor_name}: skip (caliber mismatch) — {title_text[:60]}")
+                continue
+
+        # ── Qty: parse from title when qty_unit=count, else use component default ──
+        if qty_unit == "count":
+            parsed = parse_count_qty(title_text)
+            qty    = parsed if parsed and parsed > 1 else get_qty(component)
         else:
             qty = get_qty(component)
 
+        per_unit = round(price / qty, 6) if qty else price
+
+        # ── Sanity check ────────────────────────────────────────────────────────
+        if category and not sanity_per_unit(per_unit, category):
+            log.warning(f"  {vendor_name}: sanity fail ${per_unit:.4f}/{category} "
+                        f"(price=${price}, qty={qty}) — {title_text[:50]}")
+            continue
+
         offers.append(PriceOffer(
             vendor_name, price, qty,
-            str(int(qty)) if qty_from_container else str(component.get("unit", "1")),
-            round(price / qty, 6) if qty else price,
-            href,
+            str(component.get("unit", "1")),
+            per_unit, href,
         ))
         if len(offers) >= max_results:
             break
@@ -858,7 +757,6 @@ def scrape_lucky_gunner(component):
         price_selector="span.price, span.regular-price",
         link_pattern=r"luckygunner\.com/",
         max_results=8,
-        qty_from_container=True,   # LG category pages mix box & case pricing; read qty from card text
     )
 
     # Filter to products matching the tracked brand
@@ -1028,7 +926,11 @@ def _ebay_token() -> str:
             data="grant_type=client_credentials&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope",
             timeout=15,
         )
-        return r.json().get("access_token", "")
+        data = r.json()
+        token = data.get("access_token", "")
+        if not token:
+            logging.warning(f"eBay token request failed — HTTP {r.status_code} — {data}")
+        return token
     except Exception as e:
         logging.warning(f"eBay token error: {e}")
         return ""
@@ -1361,7 +1263,7 @@ def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=
         "powders":      80.0,   # Vihtavuori tops out ~$70/lb
         "primers":       0.25,  # match-grade primers ~$0.12-0.18/ea
         "brass":        10.0,   # per case
-        "factory_ammo":  1.50,  # $/round — premium defensive is ~$0.80-1.20, $1.50 gives headroom
+        "factory_ammo":  3.0,   # per round
         "coatings":     50.0,   # per lb
     }
     _ceil = _CEIL.get(category, 0)
@@ -1373,15 +1275,7 @@ def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=
                 log.debug(f"  Price ceiling ${_ceil}/unit dropped {_dropped} offer(s)")
             in_stock = _ceiled
         else:
-            # All offers exceed ceiling — scraper returned garbage data (e.g. LG changed
-            # page layout, returning case prices instead of per-box). Write nothing rather
-            # than storing a wildly wrong price.
-            log.warning(
-                f"  Price ceiling ${_ceil}/unit would drop ALL {len(in_stock)} offer(s) "
-                f"(cheapest was ${min(o.per_unit for o in in_stock):.4f}/unit) — "
-                f"skipping {comp_name} to avoid poisoning Firebase"
-            )
-            return None
+            log.warning(f"  Price ceiling ${_ceil}/unit would drop ALL offers — keeping originals")
 
     best     = min(in_stock, key=lambda o: o.per_unit)
     snapshot = {
@@ -1394,11 +1288,6 @@ def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=
         "all_offers":     [asdict(o) for o in sorted(offers, key=lambda x: x.per_unit)],
         **trends,
     }
-    # Persist component metadata so the UI can filter/display correctly
-    if component:
-        for fld in ("caliber", "grain", "brand", "type", "no_reload"):
-            if fld in component:
-                snapshot[fld] = component[fld]
     if dry_run:
         log.info(f"  [DRY RUN] {comp_name}: ${best.per_unit:.4f}/{best.unit} "
                  f"@ {best.vendor} | alert={trends.get('alert')}")
@@ -1488,7 +1377,7 @@ def run_scraper():
         log.setLevel(logging.DEBUG)
 
     log.info("=" * 60)
-    log.info(f"AMMO IQ Scraper v2.6 — {TODAY}")
+    log.info(f"Ammo Radar Scraper v2.7 — {TODAY}")
     if args.dry_run:
         log.info("*** DRY RUN — Firebase will NOT be written ***")
     log.info("=" * 60)
@@ -1514,17 +1403,6 @@ def run_scraper():
         "factory_ammo": config.get("factory_ammo",  []),
     }
 
-    # ── Warehouse sync ─────────────────────────────────────────────
-    # Pull any factory ammo from the F.I.R.S.T. warehouse that isn't
-    # already covered by components.yaml and add it to this run's targets.
-    existing_factory_ids = {c["id"] for c in cats["factory_ammo"]}
-    wh_comps = load_warehouse_factory_ammo(existing_factory_ids)
-    if wh_comps:
-        log.info(f"Warehouse sync: +{len(wh_comps)} new target(s) added to factory_ammo")
-        cats["factory_ammo"].extend(wh_comps)
-    else:
-        log.info("Warehouse sync: no new factory ammo to add")
-
     if args.category:
         cats = {k: v for k, v in cats.items() if k == args.category}
     if args.component:
@@ -1538,6 +1416,7 @@ def run_scraper():
             continue
         log.info(f"\n── {category.upper()} ({len(components)}) ──")
         for comp in components:
+            comp["_category"] = category   # inject for sanity checks in price_anchor_offers
             comp_id, comp_name = comp["id"], comp["name"]
             vendors = comp.get("vendors", ["powder_valley", "grafs", "midsouth"])
             log.info(f"Scraping: {comp_name}")
@@ -1584,7 +1463,12 @@ def run_scraper():
 
             try:
                 in_stock      = [o for o in all_offers if o.in_stock] or all_offers
-                best_per_unit = min(o.per_unit for o in in_stock)
+                # Outlier filter: discard per_unit > 5x median of all offers
+                raw_units = sorted(o.per_unit for o in in_stock)
+                if len(raw_units) >= 3:
+                    median = raw_units[len(raw_units)//2]
+                    in_stock = [o for o in in_stock if o.per_unit <= median * 5]
+                best_per_unit = min(o.per_unit for o in in_stock) if in_stock else None
                 trends        = compute_trends(db, comp_id, best_per_unit)
                 best          = write_to_firebase(
                     db, comp_id, comp_name, category,
