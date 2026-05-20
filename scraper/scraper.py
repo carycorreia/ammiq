@@ -561,20 +561,38 @@ def price_anchor_offers(soup, vendor_name, component, link_domain,
                 log.debug(f"  {vendor_name}: skip (caliber mismatch) — {title_text[:60]}")
                 continue
 
-        # ── Qty: parse from title when qty_unit=count, else use component default ──
+        # ── Qty: parse from title → URL slug → smart divisor → component default ──
         if qty_unit == "count":
             parsed = parse_count_qty(title_text)
-            qty    = parsed if parsed and parsed > 1 else get_qty(component)
+
+            # Fallback 1: URL slug  e.g. ".../blazer-9mm-1000-rounds-..."
+            if not parsed or parsed <= 1:
+                m = re.search(r'[-/](\d{2,5})-rounds?', href, re.IGNORECASE)
+                parsed = int(m.group(1)) if m else 0
+
+            qty = parsed if parsed and parsed > 1 else get_qty(component)
         else:
             qty = get_qty(component)
 
         per_unit = round(price / qty, 6) if qty else price
 
-        # ── Sanity check ────────────────────────────────────────────────────────
+        # ── Sanity check — if still out of range, try smart divisor ─────────────
         if category and not sanity_per_unit(per_unit, category):
-            log.warning(f"  {vendor_name}: sanity fail ${per_unit:.4f}/{category} "
-                        f"(price=${price}, qty={qty}) — {title_text[:50]}")
-            continue
+            # The page may show a case price (e.g. $235/1000rd) but we parsed qty=50.
+            # Walk common ammo pack sizes and accept the first that passes sanity.
+            corrected = False
+            for pack in (1000, 500, 250, 200, 100, 75):
+                candidate = round(price / pack, 6)
+                if sanity_per_unit(candidate, category):
+                    log.info(f"  {vendor_name}: price ${price} / {pack} rds "
+                             f"= ${candidate:.4f}/rd (was {qty} rds — corrected)")
+                    qty, per_unit = pack, candidate
+                    corrected = True
+                    break
+            if not corrected:
+                log.debug(f"  {vendor_name}: sanity fail ${per_unit:.4f}/{category} "
+                          f"(price=${price}, qty={qty}) — {title_text[:50]}")
+                continue
 
         offers.append(PriceOffer(
             vendor_name, price, qty,
@@ -759,13 +777,8 @@ def scrape_lucky_gunner(component):
         max_results=8,
     )
 
-    # Filter to products matching the tracked brand
-    if brand and offers:
-        filtered = [o for o in offers if is_relevant(o.url, {brand})]
-        if filtered:
-            return filtered
-
-    return offers[:3]
+    # price_anchor_offers already filters by brand in title; return what it found
+    return offers[:5]
 
 
 def scrape_ammoseek(component):
