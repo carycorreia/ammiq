@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AMMO IQ — Daily Price Harvester v2.6
+Ammo Radar — Daily Price Harvester v2.7
 Playwright + email alerts + dry-run mode.
 
 Usage:
