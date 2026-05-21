@@ -782,17 +782,17 @@ def scrape_lucky_gunner(component):
     """
     Lucky Gunner — JS-rendered, Playwright. Caliber category pages only.
 
-    v2.9 — Simpler, more robust approach: pull EVERY listing on the page,
-    read the per-round price LG already displays, do the math correctly.
-    No longer bails out because a product link isn't findable.
+    v3.0 — Slug-based approach (no DOM walking required).
 
-    For each listing:
-      1. Walk up from any price element to find the product card boundary.
-      2. Read CPR directly from card text ("23.3¢ per round" / "$0.233/rd").
-      3. If no CPR text: parse qty from card text, divide total price by qty.
-      4. If qty still ambiguous: smart divisor (try ÷1000/500/250/200/100/75).
-      5. Apply brand filter AFTER pricing — don't discard before getting the number.
-      6. Use product link as href if found; fall back to category URL.
+    Every LG price element has an id like:
+        product-price-blazer-brass-9mm-115-grain-fmj-50-rounds
+
+    That slug gives us everything: product name, brand, caliber, qty, and
+    a direct URL (luckygunner.com/<slug>). We extract qty from the slug and
+    divide — no need to hunt for links or parse card text.
+
+    Fallback: smart divisor (÷1000/500/250/200/100/75/50/20) if slug has no
+    round count.
     """
     caliber_key = component.get("caliber", "")
     if not caliber_key:
@@ -805,110 +805,75 @@ def scrape_lucky_gunner(component):
         return []
 
     log.info(f"  Lucky Gunner (Playwright): {url}")
-    soup = fetch_js(url, wait_selector="span.price, span.regular-price", wait_ms=3500)
+    soup = fetch_js(url, wait_selector="span.price[id^='product-price-']", wait_ms=3500)
     if not soup:
         return []
 
     brand    = (component.get("brand") or "").lower()
-    caliber  = caliber_key.lower()
     category = component.get("_category", "factory_ammo")
-    cal_variants = {
-        caliber,
-        caliber.replace("lr", "long rifle"),
-        caliber.replace("acp", "auto"),
-        caliber.replace("spl", "special"),
-        caliber.replace("mag", "magnum"),
-    }
+    offers   = []
+    seen     = set()
 
-    offers  = []
-    seen    = set()
-
-    for price_el in soup.select("span.price, span.regular-price"):
+    # Only grab current/sale prices — id starts with "product-price-"
+    # (skips "old-price-" strikethrough elements)
+    for price_el in soup.select("span.price[id^='product-price-']"):
         total_price = parse_price(price_el.get_text())
         if not total_price:
             continue
 
-        # ── Find the card boundary by walking up the DOM ─────────────────────
-        # Stop at the first ancestor that is "large enough" to hold a full
-        # product listing (title + price + CPR).  Don't require a link.
-        card = price_el.parent
-        for _ in range(15):
-            if card is None or card.name in ("html", "body", "[document]"):
-                break
-            # Keep climbing until we find a container that has some title text
-            title_candidate = _extract_title(card)
-            if title_candidate and len(title_candidate) > 10:
-                break
-            card = card.parent
-        if card is None:
+        # ── Slug → product name, URL, qty ────────────────────────────────────
+        span_id  = price_el.get("id", "")
+        slug     = re.sub(r'^product-price-', '', span_id)
+        # e.g. "blazer-brass-9mm-115-grain-fmj-50-rounds"
+
+        product_url = f"https://www.luckygunner.com/{slug}"
+        if product_url in seen:
             continue
 
-        card_text  = card.get_text(" ", strip=True)
-        title_text = _extract_title(card) or ""
+        # Title: slug with hyphens → spaces
+        title_text = slug.replace("-", " ").strip()
         title_low  = title_text.lower()
 
-        # ── Brand filter (post-data, not pre-data) ────────────────────────────
-        if brand and brand not in title_low and brand not in card_text.lower():
+        # ── Brand / title filter ──────────────────────────────────────────────
+        if brand and brand not in title_low:
             log.debug(f"  Lucky Gunner: skip (brand '{brand}') — {title_text[:60]}")
-            continue
-        if caliber and not any(v in title_low.replace("-","").replace(" ","")
-                               or v in title_low for v in cal_variants):
-            log.debug(f"  Lucky Gunner: skip (caliber) — {title_text[:60]}")
             continue
         if not validate_title(title_text, component):
             log.debug(f"  Lucky Gunner: skip (validate_title) — {title_text[:60]}")
             continue
 
-        # ── Step 1: Read CPR directly from card text ──────────────────────────
-        # LG prints "(23.3¢ per round)" right next to every total price.
-        per_unit = parse_cpr_text(card_text)
-        if per_unit:
-            log.info(f"  Lucky Gunner: CPR from text = ${per_unit:.4f}/rd — {title_text[:50]}")
+        # ── Qty from slug: "...-50-rounds" → 50 ──────────────────────────────
+        qty_match = re.search(r'-(\d{2,5})-rounds?', slug, re.IGNORECASE)
+        qty_from_slug = int(qty_match.group(1)) if qty_match else 0
 
-        # ── Step 2: Parse qty from card text, divide total price ──────────────
-        if not per_unit:
-            qty = parse_count_qty(card_text) or parse_count_qty(title_text)
-            if qty and qty > 1:
-                per_unit = round(total_price / qty, 6)
-                log.info(f"  Lucky Gunner: ${total_price}/{qty} = ${per_unit:.4f}/rd — {title_text[:50]}")
-
-        # ── Step 3: Smart divisor — try common case/box sizes ─────────────────
-        if not per_unit or not sanity_per_unit(per_unit, category):
-            corrected = False
+        if qty_from_slug > 1:
+            per_unit = round(total_price / qty_from_slug, 6)
+            log.info(f"  Lucky Gunner: ${total_price}/{qty_from_slug} (slug) "
+                     f"= ${per_unit:.4f}/rd — {title_text[:50]}")
+        else:
+            # ── Fallback: smart divisor ───────────────────────────────────────
+            per_unit  = None
             for pack in (1000, 500, 250, 200, 100, 75, 50, 20):
                 candidate = round(total_price / pack, 6)
                 if sanity_per_unit(candidate, category):
+                    per_unit = candidate
                     log.info(f"  Lucky Gunner: smart-divisor ${total_price}/{pack} "
                              f"= ${candidate:.4f}/rd — {title_text[:40]}")
-                    per_unit  = candidate
-                    corrected = True
                     break
-            if not corrected:
-                log.debug(f"  Lucky Gunner: cannot determine per-unit, skip — {title_text[:50]}")
+            if not per_unit:
+                log.debug(f"  Lucky Gunner: cannot determine qty, skip — {title_text[:50]}")
                 continue
 
-        # ── Final sanity gate ─────────────────────────────────────────────────
+        # ── Sanity gate ───────────────────────────────────────────────────────
         if not sanity_per_unit(per_unit, category):
             log.debug(f"  Lucky Gunner: ${per_unit:.4f}/rd outside sanity — {title_text[:50]}")
             continue
 
-        # ── Get href — product link if found, category URL as fallback ────────
-        link_el = card.select_one("a[href]")
-        if link_el:
-            href = link_el["href"]
-            if not href.startswith("http"):
-                href = "https://www.luckygunner.com" + href
-        else:
-            href = url   # fallback: the caliber category page itself
-
-        if href in seen:
-            continue
-        seen.add(href)
-
+        seen.add(product_url)
         offers.append(PriceOffer(
             "Lucky Gunner", total_price, get_qty(component),
             str(component.get("unit", "1")),
-            per_unit, href,
+            per_unit, product_url,
         ))
         if len(offers) >= 5:
             break
