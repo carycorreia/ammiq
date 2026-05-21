@@ -838,13 +838,20 @@ def scrape_lucky_gunner(component):
             continue
 
         # ── Walk up DOM to find card container with a LG product link ───────
+        # LG category pages use RELATIVE hrefs like /handgun/9mm-ammo/product-name
+        # so we cannot filter by "luckygunner.com/" — match relative /paths too.
         container = price_el
         link_el   = None
         for _ in range(12):
             container = container.parent
             if not container or container.name in ("html", "body", "[document]"):
                 break
-            candidates = container.find_all("a", href=re.compile(r"luckygunner\.com/"))
+            candidates = [
+                a for a in container.find_all("a", href=True)
+                if ("luckygunner.com/" in a["href"]
+                    or (a["href"].startswith("/") and a["href"].count("/") >= 2
+                        and not a["href"].startswith(("/#", "/cart", "/account", "/search"))))
+            ]
             if candidates:
                 link_el = candidates[0]
                 break
@@ -854,7 +861,7 @@ def scrape_lucky_gunner(component):
 
         href = link_el["href"]
         if not href.startswith("http"):
-            href = "https://www.luckygunner.com/" + href.lstrip("/")
+            href = "https://www.luckygunner.com" + href
         if href in seen:
             continue
 
