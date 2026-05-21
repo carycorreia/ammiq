@@ -973,8 +973,25 @@ def scrape_ammoseek(component):
 
 
 def scrape_target_sports(component):
-    """Target Sports USA — JS-rendered, Playwright."""
+    """
+    Target Sports USA — JS-rendered, Playwright.
+
+    v2.8: Added brand/caliber title filter + parse_count_qty + smart divisor,
+    matching the same fix applied to Lucky Gunner. Prevents case prices (e.g.
+    $233/1000rd) being divided by the component unit (50) → $4.66/rd.
+    """
+    brand    = (component.get("brand") or "").lower()
+    caliber  = (component.get("caliber") or "").lower()
+    category = component.get("_category", "factory_ammo")
+    cal_variants = {
+        caliber,
+        caliber.replace("lr", "long rifle"),
+        caliber.replace("acp", "auto"),
+        caliber.replace("spl", "special"),
+        caliber.replace("mag", "magnum"),
+    }
     offers = []
+
     for term in component.get("search_terms", [])[:1]:
         url  = f"https://www.targetsportsusa.com/search.aspx?q={requests.utils.quote(term)}"
         log.info(f"  Target Sports (Playwright): {url[:65]}")
@@ -991,12 +1008,50 @@ def scrape_target_sports(component):
             price = parse_price(str(raw))
             if not price:
                 continue
-            qty = get_qty(component, 50.0)
+
+            href       = link_el["href"] if link_el else url
+            title_text = _extract_title(card) or (link_el.get_text(" ", strip=True) if link_el else "")
+            title_low  = title_text.lower()
+            title_norm = title_low.replace("-", "").replace(" ", "")
+
+            # ── Brand / caliber / yaml title filter ──────────────────────────
+            if brand and brand not in title_low:
+                log.debug(f"  Target Sports: skip (brand '{brand}') — {title_text[:60]}")
+                continue
+            if caliber and not any(v in title_norm or v in title_low for v in cal_variants):
+                log.debug(f"  Target Sports: skip (caliber '{caliber}') — {title_text[:60]}")
+                continue
+            if not validate_title(title_text, component):
+                log.debug(f"  Target Sports: skip (validate_title) — {title_text[:60]}")
+                continue
+
+            # ── Qty: parse from title → URL slug → component default ──────────
+            parsed_qty = parse_count_qty(title_text)
+            if not parsed_qty or parsed_qty <= 1:
+                m = re.search(r'[-/](\d{2,5})-rounds?', href, re.IGNORECASE)
+                parsed_qty = int(m.group(1)) if m else 0
+            qty      = parsed_qty if parsed_qty and parsed_qty > 1 else get_qty(component, 50.0)
+            per_unit = round(price / qty, 6) if qty else price
+
+            # ── Smart divisor if per_unit is implausibly high ─────────────────
+            if category and not sanity_per_unit(per_unit, category):
+                corrected = False
+                for pack in (1000, 500, 250, 200, 100, 75):
+                    candidate = round(price / pack, 6)
+                    if sanity_per_unit(candidate, category):
+                        log.info(f"  Target Sports: ${price}/{pack} = ${candidate:.4f}/rd "
+                                 f"(was {qty}) — {title_text[:40]}")
+                        qty, per_unit = pack, candidate
+                        corrected = True
+                        break
+                if not corrected:
+                    log.debug(f"  Target Sports: sanity fail, skip — {title_text[:50]}")
+                    continue
+
             offers.append(PriceOffer(
                 "Target Sports USA", price, qty,
                 str(component.get("unit", "50")),
-                round(price / qty, 6) if qty else price,
-                link_el["href"] if link_el else url,
+                per_unit, href,
             ))
     return offers
 
