@@ -805,7 +805,7 @@ def scrape_lucky_gunner(component):
         return []
 
     log.info(f"  Lucky Gunner (Playwright): {url}")
-    soup = fetch_js(url, wait_selector="span.price[id^='product-price-']", wait_ms=3500)
+    soup = fetch_js(url, wait_selector="span.price", wait_ms=3500)
     if not soup:
         return []
 
@@ -814,9 +814,13 @@ def scrape_lucky_gunner(component):
     offers   = []
     seen     = set()
 
-    # Only grab current/sale prices — id starts with "product-price-"
-    # (skips "old-price-" strikethrough elements)
-    for price_el in soup.select("span.price[id^='product-price-']"):
+    # Use find_all with regex — more reliable than CSS attribute selectors
+    # across BS4 versions. Only grab current/sale prices (id^='product-price-'),
+    # skipping "old-price-" strikethrough elements.
+    all_price_spans = soup.find_all("span", id=re.compile(r'^product-price-'))
+    log.info(f"  Lucky Gunner: found {len(all_price_spans)} product-price spans on page")
+
+    for price_el in all_price_spans:
         total_price = parse_price(price_el.get_text())
         if not total_price:
             continue
