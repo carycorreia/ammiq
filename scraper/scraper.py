@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
-Ammo Radar — Daily Price Harvester v2.8
+Ammo Radar — Daily Price Harvester v2.9
 Playwright + eBay Browse API + email alerts + dry-run mode.
 
 v2.7: parse_count_qty, title brand/caliber filter, sanity caps, outlier filter, eBay API
-v2.8: Powder Valley → Playwright (was blocked 403), Grafs URL fix (404), Midsouth URL fix
+v2.8: Powder Valley → Playwright (403 fix), Grafs URL fallback (404 fix)
+v2.9: parse_weight_qty for metals (fixes eBay sanity failures on lot prices),
+      equipment keyword filter (skip furnaces/molds/pots on eBay),
+      Grafs → Playwright fallback (both static URL patterns still 404)
 
 Usage:
   python scraper.py                       # normal daily run
@@ -53,6 +56,13 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
+
+# Keywords that indicate equipment/tools, NOT raw material — skip these on eBay
+_EQUIPMENT_KEYWORDS = [
+    "furnace", "mould", "mold", "ladle", "pot ", "melter", "casting machine",
+    "dipper", "ingot mold", "lead pot", "bullet mould", "bullet mold",
+    "lee production", "lyman model", "rcbs cast",
+]
 
 # ── Data class ────────────────────────────────────────────────────
 @dataclass
@@ -108,9 +118,8 @@ def get_qty(component: dict, default: float = 1.0) -> float:
 
 def parse_count_qty(text: str) -> Optional[float]:
     """
-    Extract pack/count quantity from a product title.
-    e.g. "CCI Standard 22LR 3,330 Rounds" → 3330.0
-         "Federal 9mm 50-Round Box"        → 50.0
+    Extract round/count quantity from ammo product titles.
+    e.g. "CCI 22LR 3,330 Rounds" → 3330.0,  "Federal 9mm 50-Round Box" → 50.0
     """
     cleaned = re.sub(r"(\d),(\d{3})\b", r"\1\2", text)
     patterns = [
@@ -128,6 +137,47 @@ def parse_count_qty(text: str) -> Optional[float]:
             except (ValueError, IndexError):
                 pass
     return None
+
+def parse_weight_qty(text: str) -> Optional[float]:
+    """
+    Extract weight (in pounds) from metals product titles.
+    e.g. "10 POUNDS Lyman #2 Alloy"  → 10.0
+         "15+ lbs lead ingots"        → 15.0
+         "50 lb soft lead"            → 50.0
+         "8oz lead"                   → 0.5   (converted from oz)
+    """
+    cleaned = re.sub(r"(\d),(\d{3})\b", r"\1\2", text)
+    # Pounds patterns  (must come before oz)
+    lb_patterns = [
+        r"(\d+(?:\.\d+)?)\s*\+?\s*(?:pound|lb)s?\b",
+        r"\b(\d+(?:\.\d+)?)\s*LB\b",
+    ]
+    for pat in lb_patterns:
+        m = re.search(pat, cleaned, re.IGNORECASE)
+        if m:
+            try:
+                val = float(m.group(1))
+                if val > 0:
+                    return val
+            except (ValueError, IndexError):
+                pass
+    # Ounces — convert to lbs
+    oz_patterns = [r"(\d+(?:\.\d+)?)\s*oz\b"]
+    for pat in oz_patterns:
+        m = re.search(pat, cleaned, re.IGNORECASE)
+        if m:
+            try:
+                val = float(m.group(1)) / 16.0
+                if val > 0:
+                    return val
+            except (ValueError, IndexError):
+                pass
+    return None
+
+def _is_equipment(title: str) -> bool:
+    """Return True if this listing looks like a tool/furnace rather than raw material."""
+    t = title.lower()
+    return any(kw in t for kw in _EQUIPMENT_KEYWORDS)
 
 def _extract_title(container) -> str:
     for sel in ["h2", "h3", "h4", ".product-name", ".product-title",
@@ -147,14 +197,16 @@ def _extract_title(container) -> str:
     return ""
 
 # ── Sanity caps ───────────────────────────────────────────────────
+# These are PER-UNIT bounds: rounds for ammo, each for primers/brass/projectiles,
+# per-pound for metals/powder, per-unit for coatings.
 _SANITY_CAPS = {
-    "factory_ammo": (0.01, 10.00),
-    "primers":      (0.01, 0.50),
-    "brass":        (0.01, 2.00),
-    "projectiles":  (0.01, 2.00),
-    "powder":       (10.0, 500.0),
+    "factory_ammo": (0.01, 10.00),   # per round
+    "primers":      (0.01, 0.50),    # per primer
+    "brass":        (0.01, 2.00),    # per case
+    "projectiles":  (0.01, 2.00),    # per bullet
+    "powder":       (10.0, 500.0),   # per lb
     "powders":      (10.0, 500.0),
-    "metals":       (0.50, 50.0),
+    "metals":       (0.50, 30.0),    # per lb  ($30/lb covers antimony; pure lead ~$1-3)
     "coatings":     (0.01, 200.0),
 }
 
@@ -265,25 +317,46 @@ def scrape_ebay(component) -> list:
             if r.status_code != 200:
                 log.warning(f"  eBay API error {r.status_code}")
                 continue
+
             for item in r.json().get("itemSummaries", []):
                 title     = item.get("title", "")
                 title_low = title.lower()
                 price_val = float(item.get("price", {}).get("value", 0) or 0)
                 item_url  = item.get("itemWebUrl", "")
-                if not price_val: continue
-                if brand and brand not in title_low: continue
-                if caliber and not _caliber_match(title_low, caliber): continue
+                if not price_val:
+                    continue
+
+                # Skip equipment listings (furnaces, molds, etc.)
+                if _is_equipment(title):
+                    log.debug(f"  eBay: skip equipment — '{title[:60]}'")
+                    continue
+
+                # Brand + caliber filters
+                if brand and brand not in title_low:
+                    continue
+                if caliber and not _caliber_match(title_low, caliber):
+                    continue
+
+                # Determine qty based on category
                 if category == "factory_ammo":
                     parsed = parse_count_qty(title)
                     qty    = parsed if parsed and parsed > 1 else get_qty(component, 50.0)
+                elif category == "metals":
+                    # Parse weight from title (e.g. "10 lbs Lyman #2") → per-lb price
+                    parsed = parse_weight_qty(title)
+                    qty    = parsed if parsed and parsed > 0 else get_qty(component, 1.0)
                 else:
                     qty = get_qty(component)
+
                 per_unit = round(price_val / qty, 6) if qty else price_val
+
                 if not sanity_per_unit(per_unit, category):
                     log.warning(f"  eBay: sanity fail ${per_unit:.4f}/{category} — '{title[:60]}'")
                     continue
+
                 offers.append(PriceOffer("eBay", price_val, qty,
                     str(component.get("unit", "1")), per_unit, item_url))
+
         except Exception as e:
             log.warning(f"  eBay error: {e}")
     if offers:
@@ -293,8 +366,8 @@ def scrape_ebay(component) -> list:
 # ── Shared ammo qty/filter helper ─────────────────────────────────
 def _ammo_qty_and_check(component, card, price, vendor_name):
     """
-    For factory_ammo: extract title, parse qty, apply brand/caliber + sanity.
-    Returns (qty, per_unit) or (None, None) to skip this card.
+    For factory_ammo: extract title, parse qty from title, apply brand/caliber + sanity.
+    Returns (qty, per_unit) or (None, None) to skip.
     """
     category  = component.get("_category", "")
     brand     = component.get("brand",   "").lower()
@@ -310,6 +383,9 @@ def _ammo_qty_and_check(component, card, price, vendor_name):
     if category == "factory_ammo":
         parsed = parse_count_qty(title)
         qty    = parsed if parsed and parsed > 1 else get_qty(component, 50.0)
+    elif category == "metals":
+        parsed = parse_weight_qty(title)
+        qty    = parsed if parsed and parsed > 0 else get_qty(component, 1.0)
     else:
         qty = get_qty(component)
     per_unit = round(price / qty, 6) if qty else price
@@ -321,10 +397,7 @@ def _ammo_qty_and_check(component, card, price, vendor_name):
 # ── Vendor scrapers ───────────────────────────────────────────────
 
 def scrape_powder_valley(component):
-    """
-    Powder Valley — v2.8: switched to Playwright (was returning 403 with static fetch).
-    Selectors match their Magento-based product grid.
-    """
+    """Powder Valley — Playwright (static was 403)."""
     offers   = []
     category = component.get("_category", "")
     for term in component.get("search_terms", [])[:2]:
@@ -340,7 +413,7 @@ def scrape_powder_valley(component):
             if not price: continue
             href = link_el["href"] if link_el else url
             if href.startswith("/"): href = "https://www.powdervalleyinc.com" + href
-            if category == "factory_ammo":
+            if category in ("factory_ammo", "metals"):
                 qty, per_unit = _ammo_qty_and_check(component, card, price, "Powder Valley")
                 if qty is None: continue
             else:
@@ -355,36 +428,42 @@ def scrape_powder_valley(component):
 
 def scrape_grafs(component):
     """
-    Grafs — v2.8: updated search URL (old /search?query= returned 404).
-    Now tries /search?q= first, then falls back to /catalogsearch/result/?q=
+    Grafs — v2.9: static URLs all return 404; fall back to Playwright.
+    Tries static first (fast), then Playwright if no product cards found.
     """
     offers   = []
     category = component.get("_category", "")
     for term in component.get("search_terms", [])[:2]:
-        # Try both known Grafs search URL patterns
-        urls_to_try = [
-            f"https://www.grafs.com/search?q={requests.utils.quote(term)}",
-            f"https://www.grafs.com/catalogsearch/result/?q={requests.utils.quote(term)}",
+        encoded = requests.utils.quote(term)
+        static_urls = [
+            f"https://www.grafs.com/search?q={encoded}",
+            f"https://www.grafs.com/catalogsearch/result/?q={encoded}",
         ]
         soup = None
-        for try_url in urls_to_try:
-            soup = fetch_static(try_url)
-            if soup and soup.select(".product-item, .item.product"):
+        for try_url in static_urls:
+            s = fetch_static(try_url)
+            if s and s.select(".product-item, .item.product, .product-item-info"):
+                soup = s
                 break
-            soup = None
+
+        if not soup:
+            # Static failed — use Playwright
+            pw_url = f"https://www.grafs.com/search?q={encoded}"
+            log.info(f"  Grafs (Playwright fallback): {pw_url[:70]}")
+            soup = fetch_js(pw_url,
+                            wait_selector=".product-item, .product-item-info",
+                            wait_ms=4500)
 
         if not soup: continue
         for card in soup.select(".product-item, .item.product, .product-item-info")[:6]:
             price_el = card.select_one(".price, .regular-price, [data-price-type='finalPrice']")
-            link_el  = card.select_one("a.product-item-link, a[href*='/reloading'], a[href*='/ammo']")
-            if not link_el:
-                link_el = card.select_one("a[href]")
+            link_el  = card.select_one("a.product-item-link, a[href]")
             if not price_el: continue
             price = parse_price(price_el.get_text())
             if not price: continue
-            href = link_el["href"] if link_el else try_url
+            href = link_el["href"] if link_el else pw_url
             if href.startswith("/"): href = "https://www.grafs.com" + href
-            if category == "factory_ammo":
+            if category in ("factory_ammo", "metals"):
                 qty, per_unit = _ammo_qty_and_check(component, card, price, "Grafs")
                 if qty is None: continue
             else:
@@ -397,24 +476,20 @@ def scrape_grafs(component):
     return offers
 
 def scrape_midsouth(component):
-    """
-    Midsouth — v2.8: updated to hash-based search URL they use for JS routing.
-    Also tries the direct /search path.
-    """
     offers   = []
     category = component.get("_category", "")
     for term in component.get("search_terms", [])[:2]:
-        urls_to_try = [
-            f"https://www.midsouthshooterssupply.com/search?keywords={requests.utils.quote(term)}",
-            f"https://www.midsouthshooterssupply.com/search#{requests.utils.quote(term)}",
+        encoded = requests.utils.quote(term)
+        static_urls = [
+            f"https://www.midsouthshooterssupply.com/search?keywords={encoded}",
+            f"https://www.midsouthshooterssupply.com/search#{encoded}",
         ]
         soup = None
-        for try_url in urls_to_try:
-            soup = fetch_static(try_url)
-            if soup and soup.select(".product-container, .product-item, .ms-product-card"):
+        for try_url in static_urls:
+            s = fetch_static(try_url)
+            if s and s.select(".product-container, .product-item, .ms-product-card"):
+                soup = s
                 break
-            soup = None
-
         if not soup: continue
         for card in soup.select(".product-container, .product-item, .ms-product-card")[:6]:
             price_el = card.select_one(".product-price, .price-box .price, .ms-price")
@@ -422,7 +497,7 @@ def scrape_midsouth(component):
             if not price_el: continue
             price = parse_price(price_el.get_text())
             if not price: continue
-            if category == "factory_ammo":
+            if category in ("factory_ammo", "metals"):
                 qty, per_unit = _ammo_qty_and_check(component, card, price, "Midsouth")
                 if qty is None: continue
             else:
@@ -465,7 +540,7 @@ def scrape_lucky_gunner(component):
     return offers
 
 def scrape_ammoseek(component):
-    """AmmoSeek returns cost-per-round directly — sanity cap only."""
+    """AmmoSeek returns cost-per-round directly."""
     caliber = component.get("caliber", "")
     if not caliber: return []
     category = component.get("_category", "factory_ammo")
@@ -477,8 +552,8 @@ def scrape_ammoseek(component):
     log.info(f"  AmmoSeek (Playwright): {url}")
     soup  = fetch_js(url, wait_selector="tr.offer-row, .listing-item", wait_ms=4500)
     if not soup: return []
-    brand   = component.get("brand", "").lower()
-    offers  = []
+    brand  = component.get("brand", "").lower()
+    offers = []
     for row in soup.select("tr.offer-row, .listing-item, .ammo-row")[:10]:
         price_el  = row.select_one(".price-per-round, .cpr, td.cpr, [data-cpr]")
         vendor_el = row.select_one(".retailer, .vendor-name, td.vendor, .seller")
@@ -595,24 +670,22 @@ def write_to_firebase(db, comp_id, comp_name, category, offers, trends, dry_run=
         return None
     in_stock = [o for o in offers if o.in_stock] or offers
 
-    # Outlier filter: discard offers >5× median before selecting best
+    # Outlier filter: discard offers >5× median
     if len(in_stock) >= 3:
         raw_units = sorted(o.per_unit for o in in_stock)
         median    = raw_units[len(raw_units) // 2]
         filtered  = [o for o in in_stock if o.per_unit <= median * 5]
         if filtered:
             in_stock = filtered
-        else:
-            log.warning(f"  Outlier filter removed all offers for {comp_name} — keeping original")
 
     best = min(in_stock, key=lambda o: o.per_unit)
     snapshot = {
-        "date":           TODAY,    "component_id":   comp_id,
-        "component_name": comp_name, "category":      category,
+        "date":           TODAY,     "component_id":   comp_id,
+        "component_name": comp_name, "category":       category,
         "best_per_unit":  best.per_unit, "best_price": best.price,
-        "best_qty":       best.qty,  "best_unit":     best.unit,
-        "best_vendor":    best.vendor, "best_url":    best.url,
-        "offer_count":    len(offers), "last_updated": TODAY,
+        "best_qty":       best.qty,  "best_unit":      best.unit,
+        "best_vendor":    best.vendor, "best_url":     best.url,
+        "offer_count":    len(offers), "last_updated":  TODAY,
         "all_offers":     [asdict(o) for o in sorted(offers, key=lambda x: x.per_unit)[:10]],
         **trends,
     }
@@ -633,7 +706,6 @@ def send_alert_email(alerts):
     if not all([frm, to, pwd]):
         log.info("  Email alerts not configured (set ALERT_EMAIL_FROM / TO / PASS)")
         return
-
     buy_list   = [a for a in alerts if a["alert"] == "buy"]
     stock_list = [a for a in alerts if a["alert"] == "stock_up"]
     subject    = (f"🟢 Ammo Radar: {len(buy_list)} BUY signal(s) — {TODAY}" if buy_list
@@ -698,7 +770,7 @@ def run_scraper():
     if args.verbose: log.setLevel(logging.DEBUG)
 
     log.info("=" * 60)
-    log.info(f"Ammo Radar v2.8 — {TODAY}")
+    log.info(f"Ammo Radar v2.9 — {TODAY}")
     if args.dry_run: log.info("*** DRY RUN — Firebase will NOT be written ***")
     log.info("=" * 60)
 
@@ -735,7 +807,7 @@ def run_scraper():
         if not components: continue
         log.info(f"\n── {category.upper()} ({len(components)}) ──")
         for comp in components:
-            comp["_category"] = category   # inject so vendor scrapers can use it
+            comp["_category"] = category
             comp_id, comp_name = comp["id"], comp["name"]
             vendors = comp.get("vendors", ["powder_valley", "grafs", "midsouth"])
             log.info(f"Scraping: {comp_name}")
