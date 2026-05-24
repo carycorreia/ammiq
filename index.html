@@ -549,11 +549,16 @@ function card(c){
   const belowTarget=thresh&&c.best_per_unit&&c.best_per_unit<=thresh;
   const targetBadge=belowTarget?`<div style="display:inline-block;background:rgba(39,174,96,0.18);color:#20d070;border:1px solid rgba(39,174,96,0.45);font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:2px 7px;border-radius:999px;margin-bottom:5px;">🔔 TARGET HIT · &lt;$${thresh.toFixed(4)}</div>`:'';
   const bellActive=thresh?'active':'';
+  // Staleness: days_unchanged written by scraper when no fresh offers found
+  const daysOld=c.days_unchanged||0;
+  const isStale=c.stale&&daysOld>0;
+  const staleBadge=isStale?`<div style="display:inline-block;background:rgba(255,180,0,0.12);color:#c8960a;border:1px solid rgba(255,180,0,0.35);font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:2px 7px;border-radius:999px;margin-bottom:5px;">⏱ ${daysOld}d UNCHANGED</div>`:'';
+  const priceColor=isStale?'color:var(--text2);opacity:0.7;':'';
   return `<div class="price-card al-${al}" data-cat="${cat}" data-cal="${c.caliber||''}" onclick="showDetail('${c.component_id}')">
     <button class="pc-alert-bell ${bellActive}" title="${thresh?'Alert set: $'+thresh.toFixed(4)+'/'+c.best_unit:'Set price alert'}" onclick="event.stopPropagation();quickSetAlert('${c.component_id}','${c.component_name||c.name||''}','${c.best_unit||'unit'}')">${thresh?'🔔':'🔕'}</button>
     <div class="pc-header"><div><div class="pc-name">${c.component_name||c.name}</div><div class="pc-cat">${cat.replace('_',' ')}</div></div><div class="alert-badge ab-${al}">${atxt}</div></div>
-    ${targetBadge}
-    <div class="pc-price"><div class="pc-price-big">${fp(c.best_per_unit)}</div><div class="pc-price-unit">/ ${cat==='factory_ammo'?'rd':c.best_unit||''}</div></div>
+    ${targetBadge}${staleBadge}
+    <div class="pc-price"><div class="pc-price-big" style="${priceColor}">${fp(c.best_per_unit)}</div><div class="pc-price-unit">/ ${cat==='factory_ammo'?'rd':c.best_unit||''}</div></div>
     ${(()=>{const q=parseFloat(c.best_qty)||1,p=parseFloat(c.best_price)||0,isAmmo=cat==='factory_ammo';if(isAmmo&&c.best_per_unit){const boxPrice=(c.best_per_unit*(parseFloat(c.best_unit)||50));return`<div style="font-size:11px;color:var(--text3);margin:-4px 0 6px;font-family:var(--font-mono);">$${boxPrice.toFixed(2)} / ${c.best_unit||50}-rd box</div>`;}return q>1.5?`<div style="font-size:11px;color:var(--text3);margin:-4px 0 6px;font-family:var(--font-mono);">${Math.round(q)}${c.best_unit||''} lot · $${p.toFixed(2)} total</div>`:'';})()}
     <div class="pc-vendor">${c.best_vendor||'—'}${c.best_url?` · <a href="${c.best_url}" target="_blank" onclick="event.stopPropagation()">Buy →</a>`:''}</div>
     <div class="trend-row"><span>7d: ${tH(c.trend_7d)}</span><span>30d: ${tH(c.trend_30d)}</span></div>${spark}
